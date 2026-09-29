@@ -41,12 +41,17 @@ SIZES = ("XXS", "XS", "S", "M", "L", "XL", "XXL")
 ACCESSORY_TYPES = ("Placa Grabada", "Collar de Cuero", "Arnés Confort")
 COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache")
 
-PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster")
+PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Pájaro", "Pez", "Hurón", "Tortuga", "Cobaya")
 PET_IMAGES = {
     "Perro": "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80",
     "Gato": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=300&q=80",
     "Conejo": "https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=300&q=80",
-    "Hámster": "https://images.unsplash.com/photo-1425082661705-1834fb109d9c?auto=format&fit=crop&w=300&q=80"
+    "Hámster": "https://images.unsplash.com/photo-1425082661705-1834fb109d9c?auto=format&fit=crop&w=300&q=80",
+    "Pájaro": "https://images.unsplash.com/photo-1552728089-57bdde30beb3?auto=format&fit=crop&w=300&q=80",
+    "Pez": "https://images.unsplash.com/photo-1522069169874-c58ec4b76be5?auto=format&fit=crop&w=300&q=80",
+    "Hurón": "https://images.unsplash.com/photo-1615087380695-425227f17829?auto=format&fit=crop&w=300&q=80",
+    "Tortuga": "https://images.unsplash.com/photo-1437622368342-7a3d73a34c8f?auto=format&fit=crop&w=300&q=80",
+    "Cobaya": "https://images.unsplash.com/photo-1548767797-d8c844163c4c?auto=format&fit=crop&w=300&q=80"
 }
 
 COLOR_MAP = {
@@ -735,9 +740,9 @@ HOME_PAGE = """
 
       <h6 class="fw-bold text-uppercase small text-muted mb-2">Contacto & Soporte</h6>
       <div class="small text-secondary mb-3">
-        <p class="mb-1">📧 julianjuanm@gmail.com</p>
-        <p class="mb-1">📱 +57 (314) 453-7607</p>
-        <p class="mb-0">📍 Bogotá - Medellín - Cali - Villavicencio y sus alrededores</p>
+        <p class="mb-1">📧 contacto@luxpet.com</p>
+        <p class="mb-1">📱 +57 (300) 123-4567</p>
+        <p class="mb-0">📍 Bogotá - Medellín - Cali</p>
       </div>
     </div>
 
@@ -759,10 +764,13 @@ HOME_PAGE = """
         <p class="fs-5 text-light opacity-90 fw-light mt-2 mb-4">
           Alta costura y accesorios personalizados con grabado láser para los reyes del hogar.
         </p>
-        <div class="d-flex align-items-center justify-content-center justify-content-lg-start gap-3">
-          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:50px; height:50px;">🐶</div>
-          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:50px; height:50px;">🐱</div>
-          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:50px; height:50px;">🐰</div>
+        <div class="d-flex align-items-center justify-content-center justify-content-lg-start gap-2 flex-wrap">
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:45px; height:45px;">🐶</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:45px; height:45px;">🐱</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:45px; height:45px;">🐰</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:45px; height:45px;">🦜</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:45px; height:45px;">🐠</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:45px; height:45px;">🐢</div>
         </div>
       </div>
 
@@ -826,7 +834,7 @@ HOME_PAGE = """
 
           <span class="text-uppercase small fw-bold tracking-wider d-block text-center text-lg-start mt-2" style="color:var(--gold-dark); letter-spacing: 2px;">Hecho a mano en Italia & Colombia</span>
           <h1 class="display-5 fw-bold mt-2 mb-3 text-center text-lg-start">Elegancia y ternura para tu mejor amigo.</h1>
-          <p class="lead text-secondary mb-4 text-center text-lg-start">Diseña placas, collares y arneses de alta gama con personalización láser en tiempo real.</p>
+          <p class="lead text-secondary mb-4 text-center text-lg-start">Diseña placas, collares y arneses de alta gama con personalización láser en tiempo real para perros, gatos, conejos, aves y más.</p>
           
           <div class="d-flex gap-3 justify-content-center justify-content-lg-start">
             <a href="#designer" class="btn btn-gold btn-lg">Diseñar Accesorio</a>
@@ -934,17 +942,17 @@ HOME_PAGE = """
             </div>
           </div>
           <div class="col-md-3">
-            <div class="pay-card text-center" onclick="selectPay(this, 'Apple Pay')">
-              <div class="fs-2 mb-2">🍎</div>
-              <strong class="d-block mb-1">Apple Pay</strong>
-              <span class="text-muted small">Pago seguro</span>
+            <div class="pay-card text-center" onclick="selectPay(this, 'Daviplata')">
+              <div class="fs-2 mb-2">🔴</div>
+              <strong class="d-block mb-1">Daviplata</strong>
+              <span class="text-muted small">Pago directo por Celular</span>
             </div>
           </div>
           <div class="col-md-3">
             <div class="pay-card text-center" onclick="selectPay(this, 'Transferencia QR')">
               <div class="fs-2 mb-2">📱</div>
               <strong class="d-block mb-1">Transferencia QR</strong>
-              <span class="text-muted small">Nequi / Daviplata</span>
+              <span class="text-muted small">Nequi / Bancolombia</span>
             </div>
           </div>
         </div>
@@ -1172,12 +1180,20 @@ function renderPaymentForm() {
         <input type="email" class="form-control" placeholder="tucuenta@paypal.com">
       </div>
     `;
-  } else if (selectedMethod === 'Apple Pay') {
+  } else if (selectedMethod === 'Daviplata') {
     container.innerHTML = `
-      <div class="text-center py-3">
-        <div class="fs-1 mb-2">🍎</div>
-        <h6 class="fw-bold">Confirmación rápida con Apple Pay</h6>
-        <p class="text-muted small">Haz clic en confirmar para autorizar la transacción utilizando los datos guardados en tu dispositivo Apple.</p>
+      <div class="row g-3">
+        <div class="col-12">
+          <p class="text-muted small mb-2">Ingresa tu número celular registrado en Daviplata para recibir la notificación de cobro en tu celular:</p>
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de Celular Daviplata</label>
+          <input type="tel" class="form-control" placeholder="Ej. 310 123 4567" maxlength="10">
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de Documento del Titular</label>
+          <input type="text" class="form-control" placeholder="Ej. 1012345678">
+        </div>
       </div>
     `;
   } else if (selectedMethod === 'Transferencia QR') {
@@ -1203,7 +1219,6 @@ function processMockPayment() {
     return;
   }
 
-  // Cerrar modal de datos de pago
   const dataModalEl = $('paymentDataModal');
   const dataModal = bootstrap.Modal.getInstance(dataModalEl);
   if (dataModal) dataModal.hide();
@@ -1223,8 +1238,7 @@ function setMode(next, button) {
   document.querySelectorAll('#loginScreen .btn-group button').forEach(b=>b.classList.remove('active')); 
   button.classList.add('active'); 
   $('nameWrap').classList.toggle('d-none',next==='login'); 
-  $('name').required=next==='register'; 
-  $('authButton').textContent=next==='login'?'Entrar a mi cuenta':'Crear mi cuenta'; 
+  $('name').required=next==='register';$('authButton').textContent=next==='login'?'Entrar a mi cuenta':'Crear mi cuenta'; 
 }
 
 async function api(url, options={}) { 
@@ -1249,8 +1263,7 @@ function updatePreview() {
 
   $('lblSize').textContent = size;
   $('lblColor').textContent = color;
-  $('lblType').textContent = type.split(' ')[0];
-  $('lblPetType').textContent = petType;
+  $('lblType').textContent = type.split(' ')[0];$('lblPetType').textContent = petType;
 
   if (petImages && petImages[petType]) {
     $('prevPetImg').src = petImages[petType];
@@ -1261,14 +1274,11 @@ function updatePreview() {
   }
 
   if (type.includes('Placa')) {
-    $('prevStrap').style.height = '10px';
-    $('prevStrap').style.opacity = '0.4';
+    $('prevStrap').style.height = '10px';$('prevStrap').style.opacity = '0.4';
   } else if (type.includes('Arnés')) {
-    $('prevStrap').style.height = '36px';
-    $('prevStrap').style.opacity = '1';
+    $('prevStrap').style.height = '36px';$('prevStrap').style.opacity = '1';
   } else {
-    $('prevStrap').style.height = '26px';
-    $('prevStrap').style.opacity = '1';
+    $('prevStrap').style.height = '26px';$('prevStrap').style.opacity = '1';
   }
 
   const sizeScales = { 'XXS': 0.75, 'XS': 0.85, 'S': 0.95, 'M': 1.05, 'L': 1.15, 'XL': 1.25, 'XXL': 1.35 };
@@ -1289,16 +1299,15 @@ async function loadCatalog() {
 
 ['pet_name', 'pet_type', 'engraving', 'color', 'size', 'accessory_type'].forEach(id => {
   if ($(id)) {
-    $(id).addEventListener('input', updatePreview);
-    $(id).addEventListener('change', updatePreview);
+    $(id).addEventListener('input', updatePreview);$(id).addEventListener('change', updatePreview);
   }
 });
 
 $('authForm').onsubmit = async e => {
   e.preventDefault(); 
-  const processModal = new bootstrap.Modal($('authProcessModal'));
-  $('authProcessTitle').textContent = mode === 'login' ? 'Verificando cuenta...' : 'Creando tu perfil...';
-  $('authProcessSubtitle').textContent = 'Conectando de forma segura con los servidores de LuxPet...';
+  const modalEl = $('authProcessModal');
+  const processModal = new bootstrap.Modal(modalEl);
+  $('authProcessTitle').textContent = mode === 'login' ? 'Verificando cuenta...' : 'Creando tu perfil...';$('authProcessSubtitle').textContent = 'Conectando de forma segura con los servidores de LuxPet...';
   processModal.show();
 
   try { 
@@ -1318,8 +1327,11 @@ $('authForm').onsubmit = async e => {
     }, 1200);
 
   } catch(error) { 
-    processModal.hide();
-    notify(error.message); 
+    setTimeout(() => {
+      const activeModal = bootstrap.Modal.getInstance(modalEl);
+      if (activeModal) activeModal.hide();
+      notify(error.message); 
+    }, 500);
   } 
 };
 
@@ -1332,8 +1344,7 @@ function logout() {
 
 function showDashboard() {
   $('loginScreen').classList.add('d-none');
-  $('mainContent').classList.remove('d-none');
-  $('btnSidebarToggle').classList.remove('d-none');
+  $('mainContent').classList.remove('d-none');$('btnSidebarToggle').classList.remove('d-none');
 
   $('userNavStatus').innerHTML = `
     <div class="cart-btn-nav" onclick="openCartModal()">
@@ -1347,8 +1358,7 @@ function showDashboard() {
   `;
 
   $('sbUserName').textContent = currentUser?.name || 'Cliente LuxPet';
-  $('sbUserEmail').textContent = currentUser?.email || '';
-  $('sbCartCount').textContent = userCartItems.length;
+  $('sbUserEmail').textContent = currentUser?.email \vert{}\vert{} '';$('sbCartCount').textContent = userCartItems.length;
 }
 
 $('designForm').onsubmit = async e => {
@@ -1453,11 +1463,11 @@ async function loadDesigns() {
       mostrarMetodoPago(false);
     }
 
-    if($('navCartCount')) $('navCartCount').textContent = userCartItems.length;
-    if($('sbCartCount')) $('sbCartCount').textContent = userCartItems.length;
+    if($('navCartCount'))$('navCartCount').textContent = userCartItems.length;
+    if($('sbCartCount'))$('sbCartCount').textContent = userCartItems.length;
 
     const totalAmount = calculateCartTotal();
-    if($('checkoutTotalAmount')) $('checkoutTotalAmount').textContent = formatCOP(totalAmount);
+    if($('checkoutTotalAmount'))$('checkoutTotalAmount').textContent = formatCOP(totalAmount);
 
     $('designs').innerHTML = userCartItems.length ?
       '<hr><h3 class="h6 mb-3 fw-bold">Productos Agregados al Carrito</h3>' + userCartItems.map(x=>`
