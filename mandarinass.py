@@ -1537,3 +1537,6 @@ async function loadDesigns() {
   }
 })();
 </script>
+</body>
+</html>
+"""
