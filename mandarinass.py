@@ -42,7 +42,7 @@ ACCESSORY_TYPES = ("Placa Grabada", "Collar de Cuero", "Arnés Confort")
 COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache")
 
 # Se agregaron nuevos animales
-PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Pájaro", "Cobaya", "Capibara", "Erizo")
+PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Loro", "Cobaya", "Capibara", "Erizo")
 
 # Se agregaron las imágenes de los nuevos animales
 PET_IMAGES = {
