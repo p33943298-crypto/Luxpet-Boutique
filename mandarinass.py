@@ -49,11 +49,11 @@ PET_IMAGES = {
     "Perro": "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80",
     "Gato": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=300&q=80",
     "Conejo": "https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=300&q=80",
-    "Hámster": "https://images.unsplash.com/photo-1425082661705-1834fb109d9c?auto=format&fit=crop&w=300&q=80",
-    "Hurón": "https://images.unsplash.com/photo-1591824438708-ce405f36ba3d?auto=format&fit=crop&w=300&q=80",
-    "Loro": "https://images.unsplash.com/photo-1552728089-57bdde30beb3?auto=format&fit=crop&w=300&q=80",
-    "Cobaya": "https://images.unsplash.com/photo-1548767797-d8c844163c4c?auto=format&fit=crop&w=300&q=80",
-    "Capibara": "https://images.unsplash.com/photo-1598439210625-5067c578f3f6?auto=format&fit=crop&w=300&q=80",
+    "Hámster": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS1p9zHrS4vacaPMMXPwJTaFIwOfxXCfEIwRl26WTm4qg&s=10",
+    "Hurón": "https://www.clinicaveterinariazarpa.com/wp-content/uploads/2019/04/huron-cuidados-basicos-veterinario.jpg",
+    "Loro": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQebDUS5U76EagNt8m7AP159B41i1YRnHOheNSrxtqvZOhmCEnwS8eU2JE&s=10",
+    "Cobaya": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRdHHZ9xrQfd2w5Cft2Ev_BPC21t7hjzK-9iyvhce76sQ&s=10",
+    "Capibara": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE32LihXG7e2E31yQqDiEsEnXt_AzmfG0qDF-gchBubA&s=10",
     "Erizo": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSbQdAjoQMnTfbUa--3D-JcRG531VbWeD-VIRaWLt_97XEq9SJdY7Noks-Y&s=10"
 }
 
