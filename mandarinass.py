@@ -1110,8 +1110,11 @@ function mostrarMetodoPago(scroll = true) {
 }
 
 function notify(message, good=false) { 
-  $('alert').innerHTML = `<div class="alert ${good?'alert-success':'alert-danger'} shadow-lg border-0 rounded-4 px-4 py-3">${message}</div>`; 
-  setTimeout(()=> $('alert').innerHTML='', 3500); 
+  const alertEl = $('alert');
+  if (alertEl) {
+    alertEl.innerHTML = `<div class="alert ${good?'alert-success':'alert-danger'} shadow-lg border-0 rounded-4 px-4 py-3">${message}</div>`; 
+    setTimeout(()=> alertEl.innerHTML='', 3500); 
+  }
 }
 
 function barkDog() {
@@ -1132,11 +1135,14 @@ function selectPay(el, method) {
 
 function openSelectedPaymentModal() {
   renderPaymentForm();
-  $('paymentModalTitle').textContent = `💳 ${selectedMethod}`;
+  const title = $('paymentModalTitle');
+  if (title) title.textContent = `💳 ${selectedMethod}`;
   const modalEl = $('paymentDataModal');
-  let modal = bootstrap.Modal.getInstance(modalEl);
-  if (!modal) modal = new bootstrap.Modal(modalEl);
-  modal.show();
+  if (modalEl) {
+    let modal = bootstrap.Modal.getInstance(modalEl);
+    if (!modal) modal = new bootstrap.Modal(modalEl);
+    modal.show();
+  }
 }
 
 function renderPaymentForm() {
@@ -1172,12 +1178,20 @@ function renderPaymentForm() {
         <input type="email" class="form-control" placeholder="tucuenta@paypal.com">
       </div>
     `;
-  } else if (selectedMethod === 'Apple Pay') {
+  } else if (selectedMethod === 'Daviplata') {
     container.innerHTML = `
-      <div class="text-center py-3">
-        <div class="fs-1 mb-2">🍎</div>
-        <h6 class="fw-bold">Confirmación rápida con Apple Pay</h6>
-        <p class="text-muted small">Haz clic en confirmar para autorizar la transacción utilizando los datos guardados en tu dispositivo Apple.</p>
+      <div class="row g-3">
+        <div class="col-12">
+          <p class="text-muted small mb-2">Ingresa tu número celular registrado en Daviplata para recibir la notificación de cobro en tu celular:</p>
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de Celular Daviplata</label>
+          <input type="tel" class="form-control" placeholder="Ej. 310 123 4567" maxlength="10">
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de Documento del Titular</label>
+          <input type="text" class="form-control" placeholder="Ej. 1012345678">
+        </div>
       </div>
     `;
   } else if (selectedMethod === 'Transferencia QR') {
@@ -1203,125 +1217,149 @@ function processMockPayment() {
     return;
   }
 
-  // Cerrar modal de datos de pago
   const dataModalEl = $('paymentDataModal');
-  const dataModal = bootstrap.Modal.getInstance(dataModalEl);
-  if (dataModal) dataModal.hide();
+  if (dataModalEl) {
+    const dataModal = bootstrap.Modal.getInstance(dataModalEl);
+    if (dataModal) dataModal.hide();
+  }
 
-  $('modalPayMethod').textContent = selectedMethod;
-  const modal = new bootstrap.Modal($('paymentModal'));
-  modal.show();
+  if ($('modalPayMethod'))$('modalPayMethod').textContent = selectedMethod;
+  const paymentModalEl = $('paymentModal');
+  if (paymentModalEl) {
+    const modal = new bootstrap.Modal(paymentModalEl);
+    modal.show();
 
-  setTimeout(() => {
-    modal.hide();
-    notify(`🎉 ¡Pago completado con éxito mediante ${selectedMethod}! Tu orden ha sido procesada.`, true);
-  }, 2200);
+    setTimeout(() => {
+      modal.hide();
+      notify(`🎉 ¡Pago completado con éxito mediante ${selectedMethod}! Tu orden ha sido procesada.`, true);
+    }, 2200);
+  }
 }
 
 function setMode(next, button) { 
-  mode=next; 
-  document.querySelectorAll('#loginScreen .btn-group button').forEach(b=>b.classList.remove('active')); 
+  mode = next; 
+  document.querySelectorAll('#loginScreen .btn-group button').forEach(b => b.classList.remove('active')); 
   button.classList.add('active'); 
-  $('nameWrap').classList.toggle('d-none',next==='login'); 
-  $('name').required=next==='register'; 
-  $('authButton').textContent=next==='login'?'Entrar a mi cuenta':'Crear mi cuenta'; 
+  if ($('nameWrap'))$('nameWrap').classList.toggle('d-none', next === 'login'); 
+  if ($('name'))$('name').required = next === 'register'; 
+  if ($('authButton'))$('authButton').textContent = next === 'login' ? 'Entrar a mi cuenta' : 'Crear mi cuenta'; 
 }
 
 async function api(url, options={}) { 
-  const headers={'Content-Type':'application/json',...(options.headers||{})}; 
-  if(token) headers.Authorization=`Bearer ${token}`; 
-  const response=await fetch(url,{...options,headers}); 
-  const data=await response.json(); 
-  if(!response.ok) throw new Error(data.detail||'Ha ocurrido un error'); 
+  const headers = {'Content-Type': 'application/json', ...(options.headers || {})}; 
+  if (token) headers.Authorization = `Bearer ${token}`; 
+  const response = await fetch(url, {...options, headers}); 
+  const data = await response.json(); 
+  if (!response.ok) throw new Error(data.detail || 'Ha ocurrido un error'); 
   return data; 
 }
 
 function updatePreview() {
-  const petName = $('pet_name').value.trim() || 'Mascota';
-  const petType = $('pet_type').value || 'Perro';
-  const engraving = $('engraving').value.trim();
-  const color = $('color').value || 'Rosa empolvado';
-  const size = $('size').value || 'M';
-  const type = $('accessory_type').value || 'Collar';
+  const petName = $('pet_name')?.value.trim() || 'Mascota';
+  const petType = $('pet_type')?.value || 'Perro';
+  const engraving = $('engraving')?.value.trim() || '';
+  const color = $('color')?.value || 'Rosa empolvado';
+  const size = $('size')?.value || 'M';
+  const type = $('accessory_type')?.value || 'Collar';
 
-  $('prevPetName').textContent = petName;
-  $('prevEngraving').textContent = engraving;
+  if ($('prevPetName'))$('prevPetName').textContent = petName;
+  if ($('prevEngraving'))$('prevEngraving').textContent = engraving;
 
-  $('lblSize').textContent = size;
-  $('lblColor').textContent = color;
-  $('lblType').textContent = type.split(' ')[0];
-  $('lblPetType').textContent = petType;
+  if ($('lblSize'))$('lblSize').textContent = size;
+  if ($('lblColor'))$('lblColor').textContent = color;
+  if ($('lblType'))$('lblType').textContent = type.split(' ')[0];
+  if ($('lblPetType'))$('lblPetType').textContent = petType;
 
-  if (petImages && petImages[petType]) {
-    $('prevPetImg').src = petImages[petType];
+  if (petImages && petImages[petType] && $('prevPetImg')) {$('prevPetImg').src = petImages[petType];
   }
 
-  if (color && colorMap[color]) {
-    $('prevStrap').style.backgroundColor = colorMap[color];
+  if (color && colorMap[color] && $('prevStrap')) {$('prevStrap').style.backgroundColor = colorMap[color];
   }
 
-  if (type.includes('Placa')) {
-    $('prevStrap').style.height = '10px';
-    $('prevStrap').style.opacity = '0.4';
-  } else if (type.includes('Arnés')) {
-    $('prevStrap').style.height = '36px';
-    $('prevStrap').style.opacity = '1';
-  } else {
-    $('prevStrap').style.height = '26px';
-    $('prevStrap').style.opacity = '1';
+  if ($('prevStrap')) {
+    if (type.includes('Placa')) {
+      $('prevStrap').style.height = '10px';$('prevStrap').style.opacity = '0.4';
+    } else if (type.includes('Arnés')) {
+      $('prevStrap').style.height = '36px';$('prevStrap').style.opacity = '1';
+    } else {
+      $('prevStrap').style.height = '26px';$('prevStrap').style.opacity = '1';
+    }
   }
 
   const sizeScales = { 'XXS': 0.75, 'XS': 0.85, 'S': 0.95, 'M': 1.05, 'L': 1.15, 'XL': 1.25, 'XXL': 1.35 };
   const scale = sizeScales[size] || 1.0;
-  $('prevTag').style.transform = `scale(${scale})`;
+  if ($('prevTag'))$('prevTag').style.transform = `scale(${scale})`;
 }
 
 async function loadCatalog() { 
-  const data=await api('/api/catalog'); 
-  colorMap = data.color_map || {};
-  prices = data.prices || {};
-  petImages = data.pet_images || {};
-  
-  [['accessory_type',data.accessory_types],['pet_type',data.pet_types],['color',data.colors],['size',data.sizes]].forEach(([id,items])=>
-    items.forEach(item=>$(id).insertAdjacentHTML('beforeend',`<option>${item}</option>`))
-  ); 
+  try {
+    const data = await api('/api/catalog'); 
+    colorMap = data.color_map || {};
+    prices = data.prices || {};
+    petImages = data.pet_images || {};
+    
+    [['accessory_type', data.accessory_types], ['pet_type', data.pet_types], ['color', data.colors], ['size', data.sizes]].forEach(([id, items]) => {
+      const selectEl = $(id);
+      if (selectEl && items) {
+        selectEl.innerHTML = '<option value="">Seleccionar...</option>';
+        items.forEach(item => selectEl.insertAdjacentHTML('beforeend', `<option>${item}</option>`));
+      }
+    });
+  } catch (err) {
+    console.error("Error al cargar catálogo:", err);
+  }
 }
 
 ['pet_name', 'pet_type', 'engraving', 'color', 'size', 'accessory_type'].forEach(id => {
   if ($(id)) {
-    $(id).addEventListener('input', updatePreview);
-    $(id).addEventListener('change', updatePreview);
+    $(id).addEventListener('input', updatePreview);$(id).addEventListener('change', updatePreview);
   }
 });
 
-$('authForm').onsubmit = async e => {
-  e.preventDefault(); 
-  const processModal = new bootstrap.Modal($('authProcessModal'));
-  $('authProcessTitle').textContent = mode === 'login' ? 'Verificando cuenta...' : 'Creando tu perfil...';
-  $('authProcessSubtitle').textContent = 'Conectando de forma segura con los servidores de LuxPet...';
-  processModal.show();
-
-  try { 
-    const data = await api(`/api/auth/${mode==='login'?'login':'register'}`,{
-      method:'POST',
-      body:JSON.stringify({name:$('name').value,email:$('email').value,password:$('password').value})
-    });
+if ($('authForm')) {$('authForm').onsubmit = async e => {
+    e.preventDefault(); 
+    const modalEl = $('authProcessModal');
+    let processModal = null;
     
-    setTimeout(() => {
-      processModal.hide();
-      token = data.access_token; 
-      currentUser = data.user;
-      localStorage.setItem('luxpet_token', token); 
-      notify(data.message, true); 
-      showDashboard();
-      loadDesigns(); 
-    }, 1200);
+    if (modalEl) {
+      processModal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+      if ($('authProcessTitle'))$('authProcessTitle').textContent = mode === 'login' ? 'Verificando cuenta...' : 'Creando tu perfil...';
+      if ($('authProcessSubtitle'))$('authProcessSubtitle').textContent = 'Conectando de forma segura con los servidores de LuxPet...';
+      processModal.show();
+    }
 
-  } catch(error) { 
-    processModal.hide();
-    notify(error.message); 
-  } 
-};
+    try { 
+      const payload = {
+        email: $('email').value,
+        password: $('password').value
+      };
+      if (mode === 'register') {
+        payload.name = $('name').value;
+      }
+
+      const data = await api(`/api/auth/${mode === 'login' ? 'login' : 'register'}`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      
+      setTimeout(async () => {
+        if (processModal) processModal.hide();
+        token = data.access_token; 
+        currentUser = data.user;
+        localStorage.setItem('luxpet_token', token); 
+        notify(data.message, true); 
+        showDashboard();
+        await loadDesigns(); 
+      }, 800);
+
+    } catch(error) { 
+      setTimeout(() => {
+        if (processModal) processModal.hide();
+        notify(error.message); 
+      }, 400);
+    } 
+  };
+}
 
 function logout() {
   token = null;
@@ -1331,49 +1369,51 @@ function logout() {
 }
 
 function showDashboard() {
-  $('loginScreen').classList.add('d-none');
-  $('mainContent').classList.remove('d-none');
-  $('btnSidebarToggle').classList.remove('d-none');
+  if ($('loginScreen'))$('loginScreen').classList.add('d-none');
+  if ($('mainContent'))$('mainContent').classList.remove('d-none');
+  if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
 
-  $('userNavStatus').innerHTML = `
-    <div class="cart-btn-nav" onclick="openCartModal()">
-      🛒 <span class="d-none d-md-inline fw-semibold ms-1">Carrito</span>
-      <span class="cart-badge" id="navCartCount">${userCartItems.length}</span>
-    </div>
-    <div class="d-flex align-items-center gap-2 border-start ps-3">
-      <span class="small fw-semibold text-dark">👤 ${currentUser?.name || 'Cliente'}</span>
-      <button onclick="logout()" class="btn btn-sm btn-outline-danger rounded-pill ms-1 d-none d-md-inline">Salir</button>
-    </div>
-  `;
+  if ($('userNavStatus')) {$('userNavStatus').innerHTML = `
+      <div class="cart-btn-nav" onclick="openCartModal()">
+        🛒 <span class="d-none d-md-inline fw-semibold ms-1">Carrito</span>
+        <span class="cart-badge" id="navCartCount">${userCartItems.length}</span>
+      </div>
+      <div class="d-flex align-items-center gap-2 border-start ps-3">
+        <span class="small fw-semibold text-dark">👤 ${currentUser?.name || 'Cliente'}</span>
+        <button onclick="logout()" class="btn btn-sm btn-outline-danger rounded-pill ms-1 d-none d-md-inline">Salir</button>
+      </div>
+    `;
+  }
 
-  $('sbUserName').textContent = currentUser?.name || 'Cliente LuxPet';
-  $('sbUserEmail').textContent = currentUser?.email || '';
-  $('sbCartCount').textContent = userCartItems.length;
+  if ($('sbUserName'))$('sbUserName').textContent = currentUser?.name || 'Cliente LuxPet';
+  if ($('sbUserEmail'))$('sbUserEmail').textContent = currentUser?.email || '';
+  if ($('sbCartCount'))$('sbCartCount').textContent = userCartItems.length;
 }
 
-$('designForm').onsubmit = async e => {
-  e.preventDefault(); 
-  try { 
-    await api('/api/customizations',{
-      method:'POST',
-      body:JSON.stringify({
-        accessory_type:$('accessory_type').value,
-        pet_type:$('pet_type').value,
-        pet_name:$('pet_name').value,
-        color:$('color').value,
-        size:$('size').value,
-        engraving:$('engraving').value
-      })
-    }); 
-    notify('¡Tu diseño personalizado se ha agregado al carrito! ✨', true); 
-    mostrarMetodoPago(true);
-    e.target.reset(); 
-    updatePreview();
-    await loadDesigns(); 
-  } catch(error) { 
-    notify(error.message); 
-  } 
-};
+if ($('designForm')) {$('designForm').onsubmit = async e => {
+    e.preventDefault(); 
+    try { 
+      await api('/api/customizations', {
+        method: 'POST',
+        body: JSON.stringify({
+          accessory_type: $('accessory_type').value,
+          pet_type: $('pet_type').value,
+          pet_name: $('pet_name').value,
+          color: $('color').value,
+          size: $('size').value,
+          engraving: $('engraving').value
+        })
+      }); 
+      notify('¡Tu diseño personalizado se ha agregado al carrito! ✨', true); 
+      mostrarMetodoPago(true);
+      e.target.reset(); 
+      updatePreview();
+      await loadDesigns(); 
+    } catch(error) { 
+      notify(error.message); 
+    } 
+  };
+}
 
 async function removeFromCart(itemId) {
   try {
@@ -1398,49 +1438,55 @@ function openCartModal() {
   const modalList = $('cartModalList');
   const total = calculateCartTotal();
   
-  if (userCartItems.length === 0) {
-    modalList.innerHTML = `
-      <div class="text-center py-4 text-muted">
-        <span class="fs-1 d-block mb-2">🛍️</span>
-        <p class="mb-0">Tu carrito está vacío.</p>
-        <small>Diseña un accesorio personalizado para agregarlo aquí.</small>
-      </div>`;
-  } else {
-    modalList.innerHTML = userCartItems.map(item => {
-      const hexColor = colorMap[item.color] || '#d4af37';
-      const itemPrice = prices[item.accessory_type] || 45000;
-      return `
-        <div class="d-flex align-items-center justify-content-between p-3 mb-2 bg-light rounded-3 border">
-          <div class="d-flex align-items-center gap-3">
-            <div class="cart-item-preview" style="background-color: ${hexColor};">
-              🐾
-            </div>
-            <div>
-              <h6 class="mb-0 fw-bold">${item.accessory_type} (${item.pet_type || 'Mascota'}) - ${item.pet_name}</h6>
-              <small class="text-muted">Color: ${item.color} | Talla: ${item.size} ${item.engraving ? '| Grabado: '+item.engraving : ''}</small>
-            </div>
-          </div>
-          <div class="d-flex align-items-center gap-3">
-            <strong class="text-dark">${formatCOP(itemPrice)}</strong>
-            <button class="btn btn-sm btn-outline-danger border-0 rounded-circle p-1" onclick="removeFromCart(${item.id})" title="Quitar del carrito">
-              ❌
-            </button>
-          </div>
+  if (modalList) {
+    if (userCartItems.length === 0) {
+      modalList.innerHTML = `
+        <div class="text-center py-4 text-muted">
+          <span class="fs-1 d-block mb-2">🛍️</span>
+          <p class="mb-0">Tu carrito está vacío.</p>
+          <small>Diseña un accesorio personalizado para agregarlo aquí.</small>
         </div>`;
-    }).join('');
+    } else {
+      modalList.innerHTML = userCartItems.map(item => {
+        const hexColor = colorMap[item.color] || '#d4af37';
+        const itemPrice = prices[item.accessory_type] || 45000;
+        return `
+          <div class="d-flex align-items-center justify-content-between p-3 mb-2 bg-light rounded-3 border">
+            <div class="d-flex align-items-center gap-3">
+              <div class="cart-item-preview" style="background-color: ${hexColor};">
+                🐾
+              </div>
+              <div>
+                <h6 class="mb-0 fw-bold">${item.accessory_type} (${item.pet_type || 'Mascota'}) - ${item.pet_name}</h6>
+                <small class="text-muted">Color: ${item.color} | Talla: ${item.size} ${item.engraving ? '| Grabado: '+item.engraving : ''}</small>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+              <strong class="text-dark">${formatCOP(itemPrice)}</strong>
+              <button class="btn btn-sm btn-outline-danger border-0 rounded-circle p-1" onclick="removeFromCart(${item.id})" title="Quitar del carrito">
+                ❌
+              </button>
+            </div>
+          </div>`;
+      }).join('');
+    }
   }
 
-  $('cartModalTotal').textContent = formatCOP(total);
+  if ($('cartModalTotal'))$('cartModalTotal').textContent = formatCOP(total);
   const cartModalEl = $('cartModal');
-  let modal = bootstrap.Modal.getInstance(cartModalEl);
-  if(!modal) modal = new bootstrap.Modal(cartModalEl);
-  modal.show();
+  if (cartModalEl) {
+    let modal = bootstrap.Modal.getInstance(cartModalEl);
+    if (!modal) modal = new bootstrap.Modal(cartModalEl);
+    modal.show();
+  }
 }
 
 function goToCheckout() {
   const modalEl = document.getElementById('cartModal');
-  const modal = bootstrap.Modal.getInstance(modalEl);
-  if(modal) modal.hide();
+  if (modalEl) {
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+  }
   mostrarMetodoPago(true);
 }
 
@@ -1453,37 +1499,41 @@ async function loadDesigns() {
       mostrarMetodoPago(false);
     }
 
-    if($('navCartCount')) $('navCartCount').textContent = userCartItems.length;
-    if($('sbCartCount')) $('sbCartCount').textContent = userCartItems.length;
+    if ($('navCartCount'))$('navCartCount').textContent = userCartItems.length;
+    if ($('sbCartCount'))$('sbCartCount').textContent = userCartItems.length;
 
     const totalAmount = calculateCartTotal();
-    if($('checkoutTotalAmount')) $('checkoutTotalAmount').textContent = formatCOP(totalAmount);
+    if ($('checkoutTotalAmount'))$('checkoutTotalAmount').textContent = formatCOP(totalAmount);
 
-    $('designs').innerHTML = userCartItems.length ?
-      '<hr><h3 class="h6 mb-3 fw-bold">Productos Agregados al Carrito</h3>' + userCartItems.map(x=>`
-        <div class="d-flex justify-content-between align-items-center border-bottom py-2 small">
-          <div><strong>🐾 ${x.pet_name}</strong> (${x.pet_type || 'Mascota'}) · <span class="text-muted">${x.accessory_type}</span></div>
-          <div class="d-flex align-items-center gap-2">
-            <span class="badge bg-light text-dark border">${x.color} · Talla ${x.size} · ${formatCOP(prices[x.accessory_type]||45000)}</span>
-            <button class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFromCart(${x.id})" title="Eliminar">🗑️</button>
-          </div>
-        </div>`).join('')
-      : '<p class="small text-muted">Aún no tienes productos en el carrito.</p>'; 
-  } catch { 
+    if ($('designs')) {$('designs').innerHTML = userCartItems.length ?
+        '<hr><h3 class="h6 mb-3 fw-bold">Productos Agregados al Carrito</h3>' + userCartItems.map(x => `
+          <div class="d-flex justify-content-between align-items-center border-bottom py-2 small">
+            <div><strong>🐾 ${x.pet_name}</strong> (${x.pet_type || 'Mascota'}) · <span class="text-muted">${x.accessory_type}</span></div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge bg-light text-dark border">${x.color} · Talla ${x.size} · ${formatCOP(prices[x.accessory_type] || 45000)}</span>
+              <button class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFromCart(${x.id})" title="Eliminar">🗑️</button>
+            </div>
+          </div>`).join('')
+        : '<p class="small text-muted">Aún no tienes productos en el carrito.</p>'; 
+    }
+  } catch (err) { 
     localStorage.removeItem('luxpet_token'); 
     token = null; 
     location.reload();
   } 
 }
 
-if (token) {
-  showDashboard();
-  loadCatalog(); 
-  loadDesigns();
-} else {
-  loadCatalog();
-}
+// Inicialización de la aplicación
+(async function init() {
+  await loadCatalog();
+  if (token) {
+    try {
+      await loadDesigns();
+      showDashboard();
+    } catch {
+      localStorage.removeItem('luxpet_token');
+      token = null;
+    }
+  }
+})();
 </script>
-</body>
-</html>
-"""
