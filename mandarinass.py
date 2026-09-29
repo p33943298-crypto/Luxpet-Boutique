@@ -51,10 +51,10 @@ PET_IMAGES = {
     "Conejo": "https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=300&q=80",
     "Hámster": "https://images.unsplash.com/photo-1425082661705-1834fb109d9c?auto=format&fit=crop&w=300&q=80",
     "Hurón": "https://images.unsplash.com/photo-1591824438708-ce405f36ba3d?auto=format&fit=crop&w=300&q=80",
-    "Pájaro": "https://images.unsplash.com/photo-1552728089-57bdde30beb3?auto=format&fit=crop&w=300&q=80",
+    "Loro": "https://images.unsplash.com/photo-1552728089-57bdde30beb3?auto=format&fit=crop&w=300&q=80",
     "Cobaya": "https://images.unsplash.com/photo-1548767797-d8c844163c4c?auto=format&fit=crop&w=300&q=80",
     "Capibara": "https://images.unsplash.com/photo-1598439210625-5067c578f3f6?auto=format&fit=crop&w=300&q=80",
-    "Erizo": "https://images.unsplash.com/photo-1574158622682-e40e69881006?auto=format&fit=crop&w=300&q=80"
+    "Erizo": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSbQdAjoQMnTfbUa--3D-JcRG531VbWeD-VIRaWLt_97XEq9SJdY7Noks-Y&s=10"
 }
 
 COLOR_MAP = {
