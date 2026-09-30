@@ -1725,8 +1725,9 @@ conn = sqlite3.connect('luxpet.db')
 conn.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
         email TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
         role TEXT
     )
 """)
