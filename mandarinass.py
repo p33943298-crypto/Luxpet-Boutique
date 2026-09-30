@@ -1548,3 +1548,140 @@ async function loadDesigns() {
 </body>
 </html>
 """
+
+# ==============================================================================
+# CÓDIGO ADICIONAL (EXTENSIÓN DE FUNCIONALIDAD SIN MODIFICAR LO ANTERIOR)
+# ==============================================================================
+
+class CustomizationUpdate(BaseModel):
+    accessory_type: str
+    pet_name: str = Field(min_length=1, max_length=40)
+    pet_type: str = Field(default="Perro")
+    color: str
+    size: str
+    engraving: str = Field(default="", max_length=80)
+
+
+class OrderCreate(BaseModel):
+    payment_method: str
+    total_amount: float
+
+
+# Extensión del esquema de base de datos para registrar órdenes completadas
+def initialize_orders_database() -> None:
+    with get_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                payment_method TEXT NOT NULL,
+                total_amount REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Completado',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+
+# Ejecutamos la inicialización de la nueva tabla
+initialize_orders_database()
+
+
+@app.get("/api/user/me")
+def get_user_profile(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+    return {
+        "id": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "created_at": user["created_at"],
+    }
+
+
+@app.put("/api/customizations/{customization_id}")
+def update_customization(
+    customization_id: int,
+    customization: CustomizationUpdate,
+    user: sqlite3.Row = Depends(current_user),
+) -> dict[str, Any]:
+    if customization.accessory_type not in ACCESSORY_TYPES:
+        raise HTTPException(status_code=422, detail="Tipo de accesorio no válido.")
+    if customization.pet_type not in PET_TYPES:
+        raise HTTPException(status_code=422, detail="Tipo de mascota no válido.")
+    if customization.color not in COLORS:
+        raise HTTPException(status_code=422, detail="Color no disponible.")
+    if customization.size not in SIZES:
+        raise HTTPException(status_code=422, detail="Talla no disponible.")
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE customizations
+            SET accessory_type = ?, pet_name = ?, pet_type = ?, color = ?, size = ?, engraving = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                customization.accessory_type,
+                customization.pet_name.strip(),
+                customization.pet_type,
+                customization.color,
+                customization.size,
+                customization.engraving.strip(),
+                customization_id,
+                user["id"],
+            ),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Diseño no encontrado en tu carrito.")
+
+        updated = connection.execute(
+            "SELECT * FROM customizations WHERE id = ?", (customization_id,)
+        ).fetchone()
+
+    return {"message": "¡Diseño actualizado exitosamente!", "customization": dict(updated)}
+
+
+@app.post("/api/orders", status_code=status.HTTP_201_CREATED)
+def create_order(
+    order_data: OrderCreate,
+    user: sqlite3.Row = Depends(current_user),
+) -> dict[str, Any]:
+    with get_connection() as connection:
+        # Verificar que el usuario tenga items en el carrito
+        cart_items = connection.execute(
+            "SELECT * FROM customizations WHERE user_id = ?", (user["id"],)
+        ).fetchall()
+
+        if not cart_items:
+            raise HTTPException(
+                status_code=400, detail="No puedes procesar una orden con el carrito vacío."
+            )
+
+        # Registrar la orden
+        cursor = connection.execute(
+            """
+            INSERT INTO orders (user_id, payment_method, total_amount)
+            VALUES (?, ?, ?)
+            """,
+            (user["id"], order_data.payment_method, order_data.total_amount),
+        )
+        order_id = cursor.lastrowid
+
+        # Vaciar el carrito tras compra exitosa
+        connection.execute("DELETE FROM customizations WHERE user_id = ?", (user["id"],))
+
+    return {
+        "message": "¡Orden registrada con éxito!",
+        "order_id": order_id,
+        "payment_method": order_data.payment_method,
+        "total_amount": order_data.total_amount,
+    }
+
+
+@app.get("/api/orders")
+def list_orders(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return [dict(row) for row in rows]
