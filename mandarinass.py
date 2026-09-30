@@ -1717,6 +1717,11 @@ def init_admin_role_and_account() -> None:
             )
         conn.commit()
 
+import sqlite3
+
+conn = sqlite3.connect('luxpet.db')  
+
+
 conn.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
