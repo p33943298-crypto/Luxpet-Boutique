@@ -975,9 +975,9 @@ HOME_PAGE = """
             </div>
           </div>
           <div class="col-md-3">
-            <div class="pay-card text-center" onclick="selectPay(this, 'Transferencia QR')">
+            <div class="pay-card text-center" onclick="selectPay(this, 'Numero de telefono')">
               <div class="fs-2 mb-2">📱</div>
-              <strong class="d-block mb-1">Transferencia QR</strong>
+              <strong class="d-block mb-1">Numero de telefono</strong>
               <span class="text-muted small">Nequi / Daviplata</span>
             </div>
           </div>
