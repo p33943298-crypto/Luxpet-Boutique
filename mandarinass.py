@@ -1717,22 +1717,42 @@ def init_admin_role_and_account() -> None:
             )
         conn.commit()
 
-import sqlite3
+def init_db():
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                pet_name TEXT,
+                color TEXT,
+                size TEXT,
+                phone TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                total REAL NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        conn.commit()
 
-conn = sqlite3.connect('luxpet.db')  
-
-
-conn.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT
-    )
-""")
-conn.commit()
-
+# Inicializar de forma segura
+init_db()
 init_admin_role_and_account()
 
 def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
