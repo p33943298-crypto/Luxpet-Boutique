@@ -1717,6 +1717,16 @@ def init_admin_role_and_account() -> None:
             )
         conn.commit()
 
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT
+    )
+""")
+conn.commit()
+
 init_admin_role_and_account()
 
 def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
