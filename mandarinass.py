@@ -942,13 +942,6 @@ HOME_PAGE = """
             </div>
           </div>
           <div class="col-md-3">
-            <div class="pay-card text-center" onclick="selectPay(this, 'Apple Pay')">
-              <div class="fs-2 mb-2">🍎</div>
-              <strong class="d-block mb-1">Apple Pay</strong>
-              <span class="text-muted small">Pago seguro</span>
-            </div>
-          </div>
-          <div class="col-md-3">
             <div class="pay-card text-center" onclick="selectPay(this, 'Transferencia QR')">
               <div class="fs-2 mb-2">📱</div>
               <strong class="d-block mb-1">Transferencia QR</strong>
