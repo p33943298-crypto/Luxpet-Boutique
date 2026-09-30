@@ -743,9 +743,9 @@ HOME_PAGE = """
 
       <h6 class="fw-bold text-uppercase small text-muted mb-2">Contacto & Soporte</h6>
       <div class="small text-secondary mb-3">
-        <p class="mb-1">📧 contacto@luxpet.com</p>
-        <p class="mb-1">📱 +57 (300) 123-4567</p>
-        <p class="mb-0">📍 Bogotá - Medellín - Cali</p>
+        <p class="mb-1">📧 julianjuanm@gmail.com</p>
+        <p class="mb-1">📱 +57 314 4537607</p>
+        <p class="mb-0">📍 Bogotá - Medellín - Cali - Villavicencio y sus alrededores</p>
       </div>
     </div>
 
@@ -1685,3 +1685,207 @@ def list_orders(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any
             (user["id"],),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ==============================================================================
+# BASE DE DATOS Y PANEL DE ADMINISTRACIÓN (EXPANSIÓN)
+# ==============================================================================
+
+ADMIN_EMAIL = "julianjuanm@gmail.com"
+ADMIN_PASSWORD = "arroz1234"
+
+def init_admin_role_and_account() -> None:
+    with get_connection() as conn:
+        # Aseguramos columna role
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Crear o actualizar usuario Administrador Único
+        admin_user = conn.execute("SELECT id FROM users WHERE email = ?", (ADMIN_EMAIL,)).fetchone()
+        if not admin_user:
+            conn.execute(
+                "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
+                ("Administrador LuxPet", ADMIN_EMAIL, hash_password(ADMIN_PASSWORD))
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET role = 'admin', password_hash = ? WHERE id = ?",
+                (hash_password(ADMIN_PASSWORD), admin_user["id"])
+            )
+        conn.commit()
+
+init_admin_role_and_account()
+
+def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
+    if user["email"] != ADMIN_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso exclusivo para el Administrador Principal."
+        )
+    return user
+
+@app.get("/api/admin/metrics")
+def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+    with get_connection() as conn:
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        total_revenue = conn.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders").fetchone()[0]
+        recent_orders = conn.execute("""
+            SELECT o.id, u.name as user_name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
+            FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC LIMIT 20
+        """).fetchall()
+        all_users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
+
+    return {
+        "metrics": {
+            "users_count": total_users,
+            "orders_count": total_orders,
+            "total_revenue": total_revenue
+        },
+        "orders": [dict(r) for r in recent_orders],
+        "users": [dict(u) for u in all_users]
+    }
+
+# ==============================================================================
+# INYECCIÓN DINO-JS EN EL CLIENTE PARA MODO ADMINISTRADOR VISTA DEDICADA
+# ==============================================================================
+
+ADMIN_SCRIPT_EXTENSION = """
+<script>
+(function() {
+  const oldShowDashboard = window.showDashboard;
+  window.showDashboard = function() {
+    if (oldShowDashboard) oldShowDashboard();
+    
+    if (currentUser && currentUser.email === 'julianjuanm@gmail.com') {
+      renderAdminDashboard();
+    }
+  };
+
+  async function renderAdminDashboard() {
+    try {
+      const data = await api('/api/admin/metrics');
+      let adminSection = document.getElementById('adminSection');
+      if (!adminSection) {
+        adminSection = document.createElement('section');
+        adminSection.id = 'adminSection';
+        adminSection.className = 'container py-4 my-4';
+        
+        const main = document.querySelector('main');
+        if (main) main.insertBefore(adminSection, main.firstChild);
+      }
+
+      adminSection.innerHTML = `
+        <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
+              <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
+            </div>
+            <span class="fs-1">🛠️</span>
+          </div>
+
+          <div class="row g-3 mb-4 text-center">
+            <div class="col-md-4">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase">Usuarios Registrados</small>
+                <strong class="fs-2 text-dark">${data.metrics.users_count}</strong>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase">Ventas Completadas</small>
+                <strong class="fs-2 text-dark">${data.metrics.orders_count}</strong>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase">Recaudado Total</small>
+                <strong class="fs-2 text-success">${formatCOP(data.metrics.total_revenue)}</strong>
+              </div>
+            </div>
+          </div>
+
+          <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
+            <li class="nav-item">
+              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Órdenes Globales</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Lista de Usuarios</button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="pills-tabContent">
+            <div class="tab-pane fade show active" id="pills-orders">
+              <div class="table-responsive">
+                <table class="table table-hover align-middle small">
+                  <thead class="table-dark">
+                    <tr>
+                      <th>ID</th>
+                      <th>Cliente</th>
+                      <th>Método Pago</th>
+                      <th>Monto</th>
+                      <th>Estado</th>
+                      <th>Fecha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${data.orders.length ? data.orders.map(o => `
+                      <tr>
+                        <td>#${o.id}</td>
+                        <td><strong>${o.user_name}</strong><br><small class="text-muted">${o.email}</small></td>
+                        <td>${o.payment_method}</td>
+                        <td><strong>${formatCOP(o.total_amount)}</strong></td>
+                        <td><span class="badge bg-success">${o.status}</span></td>
+                        <td>${o.created_at}</td>
+                      </tr>
+                    `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas aún.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="tab-pane fade" id="pills-users">
+              <div class="table-responsive">
+                <table class="table table-hover align-middle small">
+                  <thead class="table-dark">
+                    <tr>
+                      <th>ID</th>
+                      <th>Nombre</th>
+                      <th>Correo Electrónico</th>
+                      <th>Rol</th>
+                      <th>Fecha Registro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${data.users.map(u => `
+                      <tr>
+                        <td>#${u.id}</td>
+                        <td><strong>${u.name}</strong></td>
+                        <td>${u.email}</td>
+                        <td><span class="badge ${u.role==='admin'?'bg-danger':'bg-secondary'}">${u.role}</span></td>
+                        <td>${u.created_at}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    } catch(err) {
+      console.error('Error al cargar panel de administración:', err);
+    }
+  }
+})();
+</script>
+"""
+
+# Se sobreescribe la respuesta HTML para integrar dinámicamente la interfaz de Administrador
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def home_admin_extended() -> str:
+    return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
