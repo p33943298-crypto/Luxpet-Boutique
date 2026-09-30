@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -1747,149 +1747,7 @@ def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, 
     }
 
 # ==============================================================================
-# INYECCIÓN DINO-JS EN EL CLIENTE PARA MODO ADMINISTRADOR VISTA DEDICADA
-# ==============================================================================
-
-ADMIN_SCRIPT_EXTENSION = """
-<script>
-(function() {
-  const oldShowDashboard = window.showDashboard;
-  window.showDashboard = function() {
-    if (oldShowDashboard) oldShowDashboard();
-    
-    if (currentUser && currentUser.email === 'julianjuanm@gmail.com') {
-      renderAdminDashboard();
-    }
-  };
-
-  async function renderAdminDashboard() {
-    try {
-      const data = await api('/api/admin/metrics');
-      let adminSection = document.getElementById('adminSection');
-      if (!adminSection) {
-        adminSection = document.createElement('section');
-        adminSection.id = 'adminSection';
-        adminSection.className = 'container py-4 my-4';
-        
-        const main = document.querySelector('main');
-        if (main) main.insertBefore(adminSection, main.firstChild);
-      }
-
-      adminSection.innerHTML = `
-        <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
-              <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
-            </div>
-            <span class="fs-1">🛠️</span>
-          </div>
-
-          <div class="row g-3 mb-4 text-center">
-            <div class="col-md-4">
-              <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase">Usuarios Registrados</small>
-                <strong class="fs-2 text-dark">${data.metrics.users_count}</strong>
-              </div>
-            </div>
-            <div class="col-md-4">
-              <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase">Ventas Completadas</small>
-                <strong class="fs-2 text-dark">${data.metrics.orders_count}</strong>
-              </div>
-            </div>
-            <div class="col-md-4">
-              <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase">Recaudado Total</small>
-                <strong class="fs-2 text-success">${formatCOP(data.metrics.total_revenue)}</strong>
-              </div>
-            </div>
-          </div>
-
-          <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
-            <li class="nav-item">
-              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Órdenes Globales</button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Lista de Usuarios</button>
-            </li>
-          </ul>
-
-          <div class="tab-content" id="pills-tabContent">
-            <div class="tab-pane fade show active" id="pills-orders">
-              <div class="table-responsive">
-                <table class="table table-hover align-middle small">
-                  <thead class="table-dark">
-                    <tr>
-                      <th>ID</th>
-                      <th>Cliente</th>
-                      <th>Método Pago</th>
-                      <th>Monto</th>
-                      <th>Estado</th>
-                      <th>Fecha</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${data.orders.length ? data.orders.map(o => `
-                      <tr>
-                        <td>#${o.id}</td>
-                        <td><strong>${o.user_name}</strong><br><small class="text-muted">${o.email}</small></td>
-                        <td>${o.payment_method}</td>
-                        <td><strong>${formatCOP(o.total_amount)}</strong></td>
-                        <td><span class="badge bg-success">${o.status}</span></td>
-                        <td>${o.created_at}</td>
-                      </tr>
-                    `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas aún.</td></tr>'}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="tab-pane fade" id="pills-users">
-              <div class="table-responsive">
-                <table class="table table-hover align-middle small">
-                  <thead class="table-dark">
-                    <tr>
-                      <th>ID</th>
-                      <th>Nombre</th>
-                      <th>Correo Electrónico</th>
-                      <th>Rol</th>
-                      <th>Fecha Registro</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${data.users.map(u => `
-                      <tr>
-                        <td>#${u.id}</td>
-                        <td><strong>${u.name}</strong></td>
-                        <td>${u.email}</td>
-                        <td><span class="badge ${u.role==='admin'?'bg-danger':'bg-secondary'}">${u.role}</span></td>
-                        <td>${u.created_at}</td>
-                      </tr>
-                    `).join('')}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-    } catch(err) {
-      console.error('Error al cargar panel de administración:', err);
-    }
-  }
-})();
-</script>
-"""
-
-# Se sobreescribe la respuesta HTML para integrar dinámicamente la interfaz de Administrador
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def home_admin_extended() -> str:
-    return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
-
-
-# ==============================================================================
-# SEGUNDA EXPANSIÓN (NUEVA): RESEÑAS, CUPONES Y SISTEMA DE ESTADO DE SERVIDOR
+# SEGUNDA EXPANSIÓN: RESEÑAS, CUPONES Y SISTEMA DE ESTADO DE SERVIDOR
 # ==============================================================================
 
 class ReviewCreate(BaseModel):
@@ -2021,3 +1879,290 @@ def system_status(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]
             "reviews": review_count,
         },
     }
+
+# ==============================================================================
+# TERCERA EXPANSIÓN (NUEVA): FUNCIONES AVANZADAS Y VISTA COMPLETA DE ADMINISTRADOR
+# ==============================================================================
+
+class OrderStatusUpdate(BaseModel):
+    status: str
+
+
+@app.put("/api/admin/orders/{order_id}/status")
+def update_order_status(
+    order_id: int,
+    status_update: OrderStatusUpdate,
+    admin: sqlite3.Row = Depends(current_admin),
+) -> dict[str, Any]:
+    allowed_statuses = ("Completado", "En Producción", "Enviado", "Cancelado")
+    if status_update.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Estado no válido. Opciones permitidas: {', '.join(allowed_statuses)}",
+        )
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE orders SET status = ? WHERE id = ?",
+            (status_update.status, order_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Orden no encontrada.")
+
+    return {
+        "message": f"Orden #{order_id} actualizada a '{status_update.status}'.",
+        "order_id": order_id,
+        "new_status": status_update.status,
+    }
+
+
+@app.delete("/api/admin/users/{user_id}")
+def delete_user_account(
+    user_id: int,
+    admin: sqlite3.Row = Depends(current_admin),
+) -> dict[str, Any]:
+    with get_connection() as connection:
+        target_user = connection.execute(
+            "SELECT email FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+
+        if not target_user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+        if target_user["email"].lower() == ADMIN_EMAIL.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="No es posible eliminar la cuenta del Administrador Principal.",
+            )
+
+        connection.execute("DELETE FROM customizations WHERE user_id = ?", (user_id,))
+        connection.execute("DELETE FROM orders WHERE user_id = ?", (user_id,))
+        connection.execute("DELETE FROM reviews WHERE user_id = ?", (user_id,))
+        connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    return {"message": f"Cuenta de usuario #{user_id} eliminada exitosamente."}
+
+
+@app.get("/api/admin/export/orders")
+def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> Response:
+    with get_connection() as connection:
+        orders = connection.execute(
+            """
+            SELECT o.id, u.name as cliente, u.email, o.payment_method, o.total_amount, o.status, o.created_at
+            FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.id DESC
+            """
+        ).fetchall()
+
+    csv_lines = ["ID,Cliente,Correo,Metodo_Pago,Monto_COP,Estado,Fecha"]
+    for row in orders:
+        cliente_clean = row["cliente"].replace('"', '""')
+        csv_lines.append(
+            f'{row["id"]},"{cliente_clean}",{row["email"]},{row["payment_method"]},{row["total_amount"]},{row["status"]},{row["created_at"]}'
+        )
+
+    csv_content = "\n".join(csv_lines)
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=reporte_ventas_luxpet.csv"},
+    )
+
+
+# ==============================================================================
+# INYECCIÓN DINO-JS EN EL CLIENTE PARA MODO ADMINISTRADOR VISTA DEDICADA
+# ==============================================================================
+
+ADMIN_SCRIPT_EXTENSION = """
+<script>
+(function() {
+  const oldShowDashboard = window.showDashboard;
+  window.showDashboard = function() {
+    if (oldShowDashboard) oldShowDashboard();
+    
+    if (currentUser && currentUser.email === 'julianjuanm@gmail.com') {
+      renderAdminDashboard();
+    }
+  };
+
+  window.renderAdminDashboard = async function() {
+    try {
+      const data = await api('/api/admin/metrics');
+      let adminSection = document.getElementById('adminSection');
+      if (!adminSection) {
+        adminSection = document.createElement('section');
+        adminSection.id = 'adminSection';
+        adminSection.className = 'container py-4 my-4';
+        
+        const main = document.querySelector('main');
+        if (main) main.insertBefore(adminSection, main.firstChild);
+      }
+
+      adminSection.innerHTML = `
+        <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <div>
+              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
+              <h2 class="h3 fw-bold mt-2 mb-0">Bienvenido, Juan Manuel 👑</h2>
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-dark btn-sm rounded-pill px-3" onclick="exportOrdersCSV()">📥 Descargar CSV</button>
+              <button class="btn btn-dark btn-sm rounded-pill px-3" onclick="renderAdminDashboard()">🔄 Actualizar</button>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-4 text-center">
+            <div class="col-md-4">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase fw-bold">Total Clientes</small>
+                <strong class="fs-2 text-dark">${data.metrics.users_count}</strong>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase fw-bold">Total Ventas</small>
+                <strong class="fs-2 text-dark">${data.metrics.orders_count}</strong>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase fw-bold">Recaudado Total</small>
+                <strong class="fs-2 text-success">${formatCOP(data.metrics.total_revenue)}</strong>
+              </div>
+            </div>
+          </div>
+
+          <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
+            <li class="nav-item">
+              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Gestión de Órdenes Globales</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Gestión de Usuarios</button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="pills-tabContent">
+            <div class="tab-pane fade show active" id="pills-orders">
+              <div class="table-responsive">
+                <table class="table table-hover align-middle small">
+                  <thead class="table-dark">
+                    <tr>
+                      <th>ID</th>
+                      <th>Cliente</th>
+                      <th>Método Pago</th>
+                      <th>Monto</th>
+                      <th>Estado</th>
+                      <th>Fecha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${data.orders.length ? data.orders.map(o => `
+                      <tr>
+                        <td>#${o.id}</td>
+                        <td><strong>${o.user_name}</strong><br><small class="text-muted">${o.email}</small></td>
+                        <td>${o.payment_method}</td>
+                        <td><strong>${formatCOP(o.total_amount)}</strong></td>
+                        <td>
+                          <select class="form-select form-select-sm" style="width: auto; display: inline-block;" onchange="changeOrderStatus(${o.id}, this.value)">
+                            <option value="Completado" ${o.status==='Completado'?'selected':''}>Completado</option>
+                            <option value="En Producción" ${o.status==='En Producción'?'selected':''}>En Producción</option>
+                            <option value="Enviado" ${o.status==='Enviado'?'selected':''}>Enviado</option>
+                            <option value="Cancelado" ${o.status==='Cancelado'?'selected':''}>Cancelado</option>
+                          </select>
+                        </td>
+                        <td>${o.created_at}</td>
+                      </tr>
+                    `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas aún.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="tab-pane fade" id="pills-users">
+              <div class="table-responsive">
+                <table class="table table-hover align-middle small">
+                  <thead class="table-dark">
+                    <tr>
+                      <th>ID</th>
+                      <th>Nombre</th>
+                      <th>Correo Electrónico</th>
+                      <th>Rol</th>
+                      <th>Fecha Registro</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${data.users.map(u => `
+                      <tr>
+                        <td>#${u.id}</td>
+                        <td><strong>${u.name}</strong></td>
+                        <td>${u.email}</td>
+                        <td><span class="badge ${u.role==='admin'?'bg-danger':'bg-secondary'}">${u.role}</span></td>
+                        <td>${u.created_at}</td>
+                        <td>
+                          ${u.email !== 'julianjuanm@gmail.com' ? 
+                            `<button class="btn btn-sm btn-outline-danger py-0 px-2 rounded-pill" onclick="deleteUserAccount(${u.id})">Eliminar</button>` 
+                            : '<span class="text-muted small">Principal</span>'}
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    } catch(err) {
+      console.error('Error al cargar panel de administración:', err);
+    }
+  };
+
+  window.changeOrderStatus = async function(orderId, newStatus) {
+    try {
+      const res = await api(`/api/admin/orders/${orderId}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: newStatus })
+      });
+      notify(res.message, true);
+    } catch(err) {
+      notify(err.message);
+    }
+  };
+
+  window.deleteUserAccount = async function(userId) {
+    if(!confirm(`¿Estás seguro de que deseas eliminar la cuenta de usuario #${userId}? Esta acción borrará todas sus órdenes y personalizariones.`)) return;
+    try {
+      const res = await api(`/api/admin/users/${userId}`, { method: 'DELETE' });
+      notify(res.message, true);
+      renderAdminDashboard();
+    } catch(err) {
+      notify(err.message);
+    }
+  };
+
+  window.exportOrdersCSV = async function() {
+    try {
+      const response = await fetch('/api/admin/export/orders', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if(!response.ok) throw new Error('No se pudo descargar el archivo CSV');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'reporte_ventas_luxpet.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch(err) {
+      notify(err.message);
+    }
+  };
+})();
+</script>
+"""
+
+# Se sobreescribe la respuesta HTML para integrar dinámicamente la interfaz de Administrador
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def home_admin_extended() -> str:
+    return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
