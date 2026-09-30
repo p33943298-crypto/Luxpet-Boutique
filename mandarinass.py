@@ -1717,7 +1717,10 @@ def init_admin_role_and_account() -> None:
             )
         conn.commit()
 
-# Inicializar cuenta de administrador al arrancar
+# 1. Crear la estructura de las tablas en la base de datos primero
+initialize_database()
+
+# 2. Asignar/actualizar la cuenta del administrador
 init_admin_role_and_account()
 
 def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
