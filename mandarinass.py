@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import csv
 import hashlib
 import hmac
 import json
@@ -10,12 +9,11 @@ import re
 import secrets
 import sqlite3
 import time
-from io import StringIO
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -30,7 +28,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.2.0",
+    version="4.1.2",
 )
 
 if not STATIC_DIR.exists():
@@ -43,8 +41,10 @@ SIZES = ("XXS", "XS", "S", "M", "L", "XL", "XXL")
 ACCESSORY_TYPES = ("Placa Grabada", "Collar de Cuero", "Arnés Confort")
 COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache")
 
+# Se agregaron nuevos animales
 PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Loro", "Cobaya", "Capibara", "Erizo")
 
+# Se agregaron las imágenes de los nuevos animales
 PET_IMAGES = {
     "Perro": "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80",
     "Gato": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=300&q=80",
@@ -109,24 +109,6 @@ class AccessoryCustomization(BaseModel):
     engraving: str = Field(default="", max_length=80)
 
 
-class CustomizationUpdate(BaseModel):
-    accessory_type: str
-    pet_name: str = Field(min_length=1, max_length=40)
-    pet_type: str = Field(default="Perro")
-    color: str
-    size: str
-    engraving: str = Field(default="", max_length=80)
-
-
-class OrderCreate(BaseModel):
-    payment_method: str
-    total_amount: float
-
-
-class OrderStatusUpdate(BaseModel):
-    status: str
-
-
 def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
@@ -142,7 +124,6 @@ def initialize_database() -> None:
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'client',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS customizations (
@@ -156,16 +137,13 @@ def initialize_database() -> None:
                 engraving TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                payment_method TEXT NOT NULL,
-                total_amount REAL NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Completado',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
             """
         )
+        try:
+            connection.execute("ALTER TABLE customizations ADD COLUMN pet_type TEXT DEFAULT 'Perro'")
+            connection.commit()
+        except sqlite3.OperationalError:
+            pass
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -238,11 +216,21 @@ def current_user(
     user_id = decode_token(credentials.credentials)
     with get_connection() as connection:
         user = connection.execute(
-            "SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)
+            "SELECT id, name, email, created_at FROM users WHERE id = ?", (user_id,)
         ).fetchone()
     if user is None:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
     return user
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    initialize_database()
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def home() -> str:
+    return HOME_PAGE
 
 
 @app.get("/api/catalog")
@@ -273,7 +261,7 @@ def register(user: UserRegister) -> dict[str, Any]:
         "message": "¡Cuenta creada exitosamente!",
         "access_token": encode_token(user_id),
         "token_type": "bearer",
-        "user": {"id": user_id, "name": user.name.strip(), "email": user.email.lower(), "role": "client"},
+        "user": {"id": user_id, "name": user.name.strip(), "email": user.email.lower()},
     }
 
 
@@ -281,7 +269,7 @@ def register(user: UserRegister) -> dict[str, Any]:
 def login(user: UserLogin) -> dict[str, Any]:
     with get_connection() as connection:
         stored_user = connection.execute(
-            "SELECT id, name, email, password_hash, role FROM users WHERE email = ?",
+            "SELECT id, name, email, password_hash FROM users WHERE email = ?",
             (user.email.lower(),),
         ).fetchone()
     if stored_user is None or not verify_password(user.password, stored_user["password_hash"]):
@@ -294,7 +282,6 @@ def login(user: UserLogin) -> dict[str, Any]:
             "id": stored_user["id"],
             "name": stored_user["name"],
             "email": stored_user["email"],
-            "role": stored_user["role"],
         },
     }
 
@@ -362,231 +349,6 @@ def delete_customization(
     return {"message": "Producto eliminado del carrito correctamente."}
 
 
-@app.get("/api/user/me")
-def get_user_profile(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
-    return {
-        "id": user["id"],
-        "name": user["name"],
-        "email": user["email"],
-        "role": user["role"],
-        "created_at": user["created_at"],
-    }
-
-
-@app.put("/api/customizations/{customization_id}")
-def update_customization(
-    customization_id: int,
-    customization: CustomizationUpdate,
-    user: sqlite3.Row = Depends(current_user),
-) -> dict[str, Any]:
-    if customization.accessory_type not in ACCESSORY_TYPES:
-        raise HTTPException(status_code=422, detail="Tipo de accesorio no válido.")
-    if customization.pet_type not in PET_TYPES:
-        raise HTTPException(status_code=422, detail="Tipo de mascota no válido.")
-    if customization.color not in COLORS:
-        raise HTTPException(status_code=422, detail="Color no disponible.")
-    if customization.size not in SIZES:
-        raise HTTPException(status_code=422, detail="Talla no disponible.")
-
-    with get_connection() as connection:
-        cursor = connection.execute(
-            """
-            UPDATE customizations
-            SET accessory_type = ?, pet_name = ?, pet_type = ?, color = ?, size = ?, engraving = ?
-            WHERE id = ? AND user_id = ?
-            """,
-            (
-                customization.accessory_type,
-                customization.pet_name.strip(),
-                customization.pet_type,
-                customization.color,
-                customization.size,
-                customization.engraving.strip(),
-                customization_id,
-                user["id"],
-            ),
-        )
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Diseño no encontrado en tu carrito.")
-
-        updated = connection.execute(
-            "SELECT * FROM customizations WHERE id = ?", (customization_id,)
-        ).fetchone()
-
-    return {"message": "¡Diseño actualizado exitosamente!", "customization": dict(updated)}
-
-
-@app.post("/api/orders", status_code=status.HTTP_201_CREATED)
-def create_order(
-    order_data: OrderCreate,
-    user: sqlite3.Row = Depends(current_user),
-) -> dict[str, Any]:
-    with get_connection() as connection:
-        cart_items = connection.execute(
-            "SELECT * FROM customizations WHERE user_id = ?", (user["id"],)
-        ).fetchall()
-
-        if not cart_items:
-            raise HTTPException(
-                status_code=400, detail="No puedes procesar una orden con el carrito vacío."
-            )
-
-        cursor = connection.execute(
-            """
-            INSERT INTO orders (user_id, payment_method, total_amount)
-            VALUES (?, ?, ?)
-            """,
-            (user["id"], order_data.payment_method, order_data.total_amount),
-        )
-        order_id = cursor.lastrowid
-        connection.execute("DELETE FROM customizations WHERE user_id = ?", (user["id"],))
-
-    return {
-        "message": "¡Orden registrada con éxito!",
-        "order_id": order_id,
-        "payment_method": order_data.payment_method,
-        "total_amount": order_data.total_amount,
-    }
-
-
-@app.get("/api/orders")
-def list_orders(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any]]:
-    with get_connection() as connection:
-        rows = connection.execute(
-            "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
-            (user["id"],),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-# ==============================================================================
-# FUNCIONES EXCLUSIVAS PARA ADMINISTRADOR
-# ==============================================================================
-
-ADMIN_EMAIL = "julianjuanm@gmail.com"
-ADMIN_PASSWORD = "arroz1234"
-
-
-def init_admin_role_and_account() -> None:
-    with get_connection() as conn:
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
-
-        admin_user = conn.execute("SELECT id FROM users WHERE email = ?", (ADMIN_EMAIL,)).fetchone()
-        if not admin_user:
-            conn.execute(
-                "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
-                ("Administrador LuxPet", ADMIN_EMAIL, hash_password(ADMIN_PASSWORD))
-            )
-        else:
-            conn.execute(
-                "UPDATE users SET role = 'admin', password_hash = ? WHERE id = ?",
-                (hash_password(ADMIN_PASSWORD), admin_user["id"])
-            )
-        conn.commit()
-
-
-initialize_database()
-init_admin_role_and_account()
-
-
-def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
-    if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso restringido para el Administrador Principal."
-        )
-    return user
-
-
-@app.get("/api/admin/metrics")
-def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
-    with get_connection() as conn:
-        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
-        total_revenue = conn.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders").fetchone()[0]
-        recent_orders = conn.execute("""
-            SELECT o.id, u.name as user_name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
-            FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC
-        """).fetchall()
-        all_users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
-
-    return {
-        "metrics": {
-            "users_count": total_users,
-            "orders_count": total_orders,
-            "total_revenue": total_revenue
-        },
-        "orders": [dict(r) for r in recent_orders],
-        "users": [dict(u) for u in all_users]
-    }
-
-
-@app.put("/api/admin/orders/{order_id}/status")
-def update_order_status(
-    order_id: int,
-    status_update: OrderStatusUpdate,
-    admin: sqlite3.Row = Depends(current_admin),
-) -> dict[str, Any]:
-    with get_connection() as conn:
-        cursor = conn.execute(
-            "UPDATE orders SET status = ? WHERE id = ?",
-            (status_update.status, order_id),
-        )
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Orden no encontrada.")
-        conn.commit()
-    return {"message": f"Estado de la orden #{order_id} actualizado a '{status_update.status}'."}
-
-
-@app.delete("/api/admin/users/{user_id}")
-def delete_user_by_admin(
-    user_id: int,
-    admin: sqlite3.Row = Depends(current_admin),
-) -> dict[str, Any]:
-    if user_id == admin["id"]:
-        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta de Administrador.")
-    
-    with get_connection() as conn:
-        conn.execute("DELETE FROM customizations WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM orders WHERE user_id = ?", (user_id,))
-        cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado.")
-        conn.commit()
-    return {"message": "Usuario y sus registros asociados han sido eliminados correctamente."}
-
-
-@app.get("/api/admin/export/orders")
-def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingResponse:
-    with get_connection() as conn:
-        orders = conn.execute("""
-            SELECT o.id, u.name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
-            FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC
-        """).fetchall()
-
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID Orden", "Cliente", "Email", "Método de Pago", "Monto Total (COP)", "Estado", "Fecha Creación"])
-
-    for o in orders:
-        writer.writerow([o["id"], o["name"], o["email"], o["payment_method"], o["total_amount"], o["status"], o["created_at"]])
-
-    output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=luxpet_reporte_ventas.csv"}
-    )
-
-
-# ==============================================================================
-# VISTA FRONTEND PRINCIPAL Y PANEL JS
-# ==============================================================================
-
 HOME_PAGE = """
 <!doctype html>
 <html lang="es">
@@ -613,7 +375,9 @@ HOME_PAGE = """
       overflow-x: hidden;
       min-height: 100vh;
     }
-    h1, h2, h3, .brand-font { font-family: 'Playfair Display', serif; }
+    h1, h2, h3, .brand-font {
+      font-family: 'Playfair Display', serif;
+    }
     .fancy-title {
       font-family: 'Great Vibes', cursive;
       background: linear-gradient(135deg, #d4af37, #e8a598, #aa820a);
@@ -626,7 +390,13 @@ HOME_PAGE = """
       backdrop-filter: blur(12px);
       border-bottom: 1px solid #ebdcd5;
     }
-    .brand-logo-img { height: 42px; width: auto; object-fit: contain; border-radius: 6px; }
+    .brand-logo-img {
+      height: 42px;
+      width: auto;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+    
     .login-wrapper {
       min-height: calc(100vh - 80px);
       display: flex;
@@ -636,15 +406,48 @@ HOME_PAGE = """
       background: linear-gradient(rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.45)), 
                   url('https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=1920&q=80') center/cover no-repeat fixed;
     }
-    .login-box { max-width: 900px; width: 100%; }
-    .dog-container { width: 130px; height: 130px; margin: 0 auto; cursor: pointer; position: relative; }
-    .dog-tail { transform-origin: 10px 80px; animation: wagTail 0.8s ease-in-out infinite alternate; }
-    .dog-ear-l { transform-origin: 30px 35px; animation: earFlap 2.5s ease-in-out infinite; }
-    .dog-ear-r { transform-origin: 70px 35px; animation: earFlap 2.5s ease-in-out 0.3s infinite; }
-    .dog-eye { animation: blinkEye 4s infinite; transform-origin: center; }
-    @keyframes wagTail { 0% { transform: rotate(0deg); } 100% { transform: rotate(28deg); } }
-    @keyframes earFlap { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-8deg); } }
-    @keyframes blinkEye { 0%, 94%, 98%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+    .login-box {
+      max-width: 900px;
+      width: 100%;
+    }
+
+    .dog-container {
+      width: 130px;
+      height: 130px;
+      margin: 0 auto;
+      cursor: pointer;
+      position: relative;
+    }
+    .dog-tail {
+      transform-origin: 10px 80px;
+      animation: wagTail 0.8s ease-in-out infinite alternate;
+    }
+    .dog-ear-l {
+      transform-origin: 30px 35px;
+      animation: earFlap 2.5s ease-in-out infinite;
+    }
+    .dog-ear-r {
+      transform-origin: 70px 35px;
+      animation: earFlap 2.5s ease-in-out 0.3s infinite;
+    }
+    .dog-eye {
+      animation: blinkEye 4s infinite;
+      transform-origin: center;
+    }
+
+    @keyframes wagTail {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(28deg); }
+    }
+    @keyframes earFlap {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(-8deg); }
+    }
+    @keyframes blinkEye {
+      0%, 94%, 98%, 100% { transform: scaleY(1); }
+      96% { transform: scaleY(0.1); }
+    }
+
     .hero {
       position: relative;
       background: linear-gradient(135deg, rgba(253, 249, 246, 0.88), rgba(247, 234, 229, 0.92)),
@@ -652,6 +455,7 @@ HOME_PAGE = """
       padding: 60px 0 50px;
       border-bottom: 1px solid #efe3db;
     }
+    
     .preview-card {
       background: rgba(255, 255, 255, 0.95);
       border: 1px solid #e8dbd2;
@@ -673,46 +477,200 @@ HOME_PAGE = """
       min-height: 220px;
       position: relative;
     }
+    
     .preview-pet-img {
-      width: 70px; height: 70px; border-radius: 50%; object-fit: cover;
-      border: 3px solid var(--gold); box-shadow: 0 4px 10px rgba(0,0,0,0.15); margin-bottom: 15px;
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid var(--gold);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+      margin-bottom: 15px;
     }
+
     .collar-strap {
-      height: 26px; width: 85%; border-radius: 13px; background-color: #f2a6b4;
-      box-shadow: 0 6px 15px rgba(0,0,0,0.12); position: relative; display: flex; align-items: center; justify-content: center; transition: all 0.4s ease;
+      height: 26px;
+      width: 85%;
+      border-radius: 13px;
+      background-color: #f2a6b4;
+      box-shadow: 0 6px 15px rgba(0,0,0,0.12);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.4s ease;
     }
     .collar-buckle {
-      position: absolute; right: 15px; width: 16px; height: 32px;
-      background: linear-gradient(135deg, #d4af37, #fff2a3, #a8820a); border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      position: absolute;
+      right: 15px;
+      width: 16px;
+      height: 32px;
+      background: linear-gradient(135deg, #d4af37, #fff2a3, #a8820a);
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
     .collar-tag {
-      position: absolute; width: 52px; height: 52px; background: linear-gradient(135deg, #ffd700, #fff3a1, #b8860b);
-      border-radius: 50%; top: 12px; box-shadow: 0 6px 15px rgba(212, 175, 55, 0.4); display: flex; flex-direction: column;
-      align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; color: #2b2100; text-align: center;
-      padding: 4px; word-break: break-all; transition: all 0.3s ease; cursor: pointer;
+      position: absolute;
+      width: 52px;
+      height: 52px;
+      background: linear-gradient(135deg, #ffd700, #fff3a1, #b8860b);
+      border-radius: 50%;
+      top: 12px;
+      box-shadow: 0 6px 15px rgba(212, 175, 55, 0.4);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #2b2100;
+      text-align: center;
+      padding: 4px;
+      word-break: break-all;
+      transition: all 0.3s ease;
+      cursor: pointer;
     }
-    .collar-tag:hover { transform: scale(1.1) rotate(5deg); }
-    .tag-ring { width: 10px; height: 10px; border: 2px solid #8d6700; border-radius: 50%; position: absolute; top: -7px; }
-    .card-custom { border: 1px solid #efe3db; border-radius: 20px; background: rgba(255, 255, 255, 0.94); box-shadow: 0 10px 30px rgba(0,0,0,0.04); backdrop-filter: blur(8px); }
+    .collar-tag:hover {
+      transform: scale(1.1) rotate(5deg);
+    }
+    .tag-ring {
+      width: 10px;
+      height: 10px;
+      border: 2px solid #8d6700;
+      border-radius: 50%;
+      position: absolute;
+      top: -7px;
+    }
+
+    .card-custom {
+      border: 1px solid #efe3db;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.04);
+      backdrop-filter: blur(8px);
+    }
     .btn-gold {
-      background: linear-gradient(135deg, #d4af37, #c59b27); color: #ffffff; font-weight: 600; border: none;
-      border-radius: 50px; padding: 12px 28px; box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3); transition: all 0.3s ease;
+      background: linear-gradient(135deg, #d4af37, #c59b27);
+      color: #ffffff;
+      font-weight: 600;
+      border: none;
+      border-radius: 50px;
+      padding: 12px 28px;
+      box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3);
+      transition: all 0.3s ease;
     }
-    .btn-gold:hover { background: linear-gradient(135deg, #c59b27, #a8820a); color: #fff; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(212, 175, 55, 0.4); }
-    .form-control, .form-select { border-radius: 12px; border: 1px solid #e0d0c5; padding: 10px 14px; background-color: #fff; }
-    .form-control:focus, .form-select:focus { border-color: var(--gold); box-shadow: 0 0 0 0.25rem rgba(212, 175, 55, 0.2); }
-    #checkout { display: none; }
-    .pay-card { border: 2px solid #ebdcd5; border-radius: 14px; padding: 16px; cursor: pointer; transition: all 0.2s ease; background: #ffffff; height: 100%; }
-    .pay-card:hover, .pay-card.active { border-color: var(--gold); background: #fffdf7; transform: translateY(-3px); box-shadow: 0 8px 20px rgba(212, 175, 55, 0.15); }
-    .review-card { background: rgba(255, 255, 255, 0.95); border-radius: 16px; border: 1px solid #efe3db; padding: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.03); height: 100%; }
-    .gallery-img { border-radius: 16px; height: 220px; object-fit: cover; width: 100%; transition: transform 0.3s ease; }
-    .gallery-card:hover .gallery-img { transform: scale(1.03); }
-    #alert { position: fixed; right: 25px; top: 85px; z-index: 999; }
-    .cart-btn-nav { position: relative; border-radius: 50px; background: #ffffff; border: 1px solid #ebdcd5; padding: 6px 16px; cursor: pointer; transition: all 0.2s ease; }
-    .cart-btn-nav:hover { background: #fdfbf7; border-color: var(--gold); }
-    .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--gold-dark); color: #fff; font-size: 0.7rem; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-    .sidebar-img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; }
-    .cart-item-preview { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 0.75rem; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+    .btn-gold:hover {
+      background: linear-gradient(135deg, #c59b27, #a8820a);
+      color: #fff;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(212, 175, 55, 0.4);
+    }
+    .form-control, .form-select {
+      border-radius: 12px;
+      border: 1px solid #e0d0c5;
+      padding: 10px 14px;
+      background-color: #fff;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 0.25rem rgba(212, 175, 55, 0.2);
+    }
+
+    #checkout {
+      display: none;
+    }
+
+    .pay-card {
+      border: 2px solid #ebdcd5;
+      border-radius: 14px;
+      padding: 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: #ffffff;
+      height: 100%;
+    }
+    .pay-card:hover, .pay-card.active {
+      border-color: var(--gold);
+      background: #fffdf7;
+      transform: translateY(-3px);
+      box-shadow: 0 8px 20px rgba(212, 175, 55, 0.15);
+    }
+
+    .review-card {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 16px;
+      border: 1px solid #efe3db;
+      padding: 24px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.03);
+      height: 100%;
+    }
+
+    .gallery-img {
+      border-radius: 16px;
+      height: 220px;
+      object-fit: cover;
+      width: 100%;
+      transition: transform 0.3s ease;
+    }
+    .gallery-card:hover .gallery-img {
+      transform: scale(1.03);
+    }
+
+    #alert {
+      position: fixed;
+      right: 25px;
+      top: 85px;
+      z-index: 999;
+    }
+
+    .cart-btn-nav {
+      position: relative;
+      border-radius: 50px;
+      background: #ffffff;
+      border: 1px solid #ebdcd5;
+      padding: 6px 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .cart-btn-nav:hover {
+      background: #fdfbf7;
+      border-color: var(--gold);
+    }
+    .cart-badge {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      background: var(--gold-dark);
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .sidebar-img {
+      width: 100%;
+      height: 120px;
+      object-fit: cover;
+      border-radius: 12px;
+    }
+
+    .cart-item-preview {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: white;
+      font-size: 0.75rem;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
   </style>
 </head>
 <body>
@@ -787,7 +745,7 @@ HOME_PAGE = """
       <div class="small text-secondary mb-3">
         <p class="mb-1">📧 julianjuanm@gmail.com</p>
         <p class="mb-1">📱 +57 314 4537607</p>
-        <p class="mb-0">📍 Bogotá - Medellín - Cali - Villavicencio</p>
+        <p class="mb-0">📍 Bogotá - Medellín - Cali - Villavicencio y sus alrededores</p>
       </div>
     </div>
 
@@ -802,10 +760,18 @@ HOME_PAGE = """
 <div id="loginScreen" class="login-wrapper">
   <div class="login-box">
     <div class="row align-items-center g-4">
+      
       <div class="col-lg-6 text-center text-lg-start text-white pe-lg-4">
         <span class="badge bg-warning text-dark mb-2 px-3 py-2 rounded-pill fw-bold text-uppercase" style="letter-spacing:1px;">Colección Exclusiva 🐾</span>
         <h1 class="display-3 fancy-title mb-0">Luxpet Boutique</h1>
-        <p class="fs-5 text-light opacity-90 fw-light mt-2 mb-4">Alta costura y accesorios personalizados con grabado láser para los reyes del hogar.</p>
+        <p class="fs-5 text-light opacity-90 fw-light mt-2 mb-4">
+          Alta costura y accesorios personalizados con grabado láser para los reyes del hogar.
+        </p>
+        <div class="d-flex align-items-center justify-content-center justify-content-lg-start gap-3">
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:50px; height:50px;">🐶</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:50px; height:50px;">🐱</div>
+          <div class="p-2 bg-white bg-opacity-20 rounded-circle text-center" style="width:50px; height:50px;">🐰</div>
+        </div>
       </div>
 
       <div class="col-lg-6">
@@ -838,6 +804,7 @@ HOME_PAGE = """
           </form>
         </div>
       </div>
+
     </div>
   </div>
 </div>
@@ -989,6 +956,66 @@ HOME_PAGE = """
         </div>
       </div>
     </section>
+
+    <section class="pt-4 border-top mb-5">
+      <div class="text-center mb-4">
+        <span class="text-uppercase small fw-bold text-muted">Opiniones</span>
+        <h2 class="display-6 fw-bold">Clientes y Mascotas Felices</h2>
+      </div>
+      <div class="row g-4">
+        <div class="col-md-4">
+          <div class="review-card">
+            <div class="text-warning mb-2 fs-5">★★★★★</div>
+            <p class="small text-secondary mb-4">"El grabado en la placa quedó nítido y brillante. La atención y la presentación del empaque son de un nivel superior."</p>
+            <strong class="small d-block text-dark">— Sofía R. & Mateo (Golden Retriever)</strong>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="review-card">
+            <div class="text-warning mb-2 fs-5">★★★★★</div>
+            <p class="small text-secondary mb-4">"El arnés suave no solo luce hermoso sino que evitó por completo los tirones al pasear a mi mascota."</p>
+            <strong class="small d-block text-dark">— Andrés M. & Lola (Frenchie)</strong>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="review-card">
+            <div class="text-warning mb-2 fs-5">★★★★★</div>
+            <p class="small text-secondary mb-4">"Pedí el collar de cuero con placa para el cumpleaños de mi perrito. ¡Llegó rapidísimo y la calidad del herraje es excelente!"</p>
+            <strong class="small d-block text-dark">— Valentina G. & Thor (Pug)</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gallery" class="pt-4 border-top">
+      <div class="text-center mb-4">
+        <span class="text-uppercase small fw-bold text-muted">Galería LuxPet</span>
+        <h2 class="display-6 fw-bold">Favoritos de la Temporada</h2>
+      </div>
+      <div class="row g-4">
+        <div class="col-md-4 gallery-card">
+          <div class="card card-custom p-3">
+            <img src="/static/Coleccion Velvet Gold.jpg" class="gallery-img mb-3" alt="Colección Velvet Gold">
+            <h4 class="h5 mb-1">Colección Velvet Gold</h4>
+            <p class="text-muted small">Collar en azul noche con herrajes dorados de alta durabilidad.</p>
+          </div>
+        </div>
+        <div class="col-md-4 gallery-card">
+          <div class="card card-custom p-3">
+            <img src="/static/Placas Confort 3D.jpg" class="gallery-img mb-3" alt="Placas Confort 3D">
+            <h4 class="h5 mb-1">Placas Confort 3D</h4>
+            <p class="text-muted small">Aluminio liviano grabado a láser que no lastima el cuello.</p>
+          </div>
+        </div>
+        <div class="col-md-4 gallery-card">
+          <div class="card card-custom p-3">
+            <img src="/static/Arnes Ergonomico.jpg" class="gallery-img mb-3" alt="Arnés Ergonómico">
+            <h4 class="h5 mb-1">Arnés Ergonómico</h4>
+            <p class="text-muted small">Diseñado para evitar tirones y distribuir la presión suavemente.</p>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="bg-dark text-white py-4 mt-5 text-center">
@@ -1000,11 +1027,11 @@ HOME_PAGE = """
   </footer>
 </div>
 
-<div class="modal fade" id="cartModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="cartModal" tabindex="-1" aria-labelledby="cartModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content rounded-4 border-0 p-3">
       <div class="modal-header border-bottom">
-        <h5 class="modal-title brand-font fw-bold">🛒 Resumen de tu Carrito</h5>
+        <h5 class="modal-title brand-font fw-bold" id="cartModalLabel">🛒 Resumen de tu Carrito</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body py-4">
@@ -1024,6 +1051,7 @@ HOME_PAGE = """
   </div>
 </div>
 
+<!-- Modal para datos del Método de Pago -->
 <div class="modal fade" id="paymentDataModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content rounded-4 border-0 p-4">
@@ -1031,10 +1059,24 @@ HOME_PAGE = """
         <h5 class="modal-title brand-font fw-bold" id="paymentModalTitle">💳 Datos de Pago</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body py-3" id="paymentDetailsContainer"></div>
+      <div class="modal-body py-3" id="paymentDetailsContainer">
+        <!-- Contenido dinámico según el método seleccionado -->
+      </div>
       <div class="modal-footer border-top-0 pt-0">
         <button type="button" class="btn btn-outline-secondary rounded-pill" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-gold rounded-pill px-4" onclick="processMockPayment()">Confirmar y Pagar 🛍️</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="authProcessModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4 border-0 p-4 text-center">
+      <div class="modal-body">
+        <div class="spinner-border text-warning mb-3" style="width: 3.5rem; height: 3.5rem;" role="status"></div>
+        <h4 class="h5 font-heading fw-bold" id="authProcessTitle">Autenticando credenciales...</h4>
+        <p class="text-muted small mb-0" id="authProcessSubtitle">Por favor espera un momento mientras preparamos tu boutique.</p>
       </div>
     </div>
   </div>
@@ -1062,7 +1104,9 @@ function mostrarMetodoPago(scroll = true) {
   const seccionPago = $('checkout');
   if (seccionPago) {
     seccionPago.style.display = 'block';
-    if (scroll) seccionPago.scrollIntoView({ behavior: 'smooth' });
+    if (scroll) {
+      seccionPago.scrollIntoView({ behavior: 'smooth' });
+    }
   }
 }
 
@@ -1076,6 +1120,11 @@ function notify(message, good=false) {
 
 function barkDog() {
   notify('🐾 ¡Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
+  const tongue = $('dogTongue');
+  if(tongue) {
+    tongue.style.opacity = '1';
+    setTimeout(() => tongue.style.opacity = '0.8', 1200);
+  }
 }
 
 function selectPay(el, method) {
@@ -1087,10 +1136,12 @@ function selectPay(el, method) {
 
 function openSelectedPaymentModal() {
   renderPaymentForm();
-  if ($('paymentModalTitle'))$('paymentModalTitle').textContent = `💳 ${selectedMethod}`;
+  const title = $('paymentModalTitle');
+  if (title) title.textContent = `💳 ${selectedMethod}`;
   const modalEl = $('paymentDataModal');
   if (modalEl) {
-    let modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+    let modal = bootstrap.Modal.getInstance(modalEl);
+    if (!modal) modal = new bootstrap.Modal(modalEl);
     modal.show();
   }
 }
@@ -1102,33 +1153,87 @@ function renderPaymentForm() {
   if (selectedMethod === 'Tarjeta de Crédito') {
     container.innerHTML = `
       <div class="row g-3">
-        <div class="col-12"><label class="form-label small fw-semibold">Número de la tarjeta</label><input type="text" class="form-control" placeholder="4532 •••• •••• 8920"></div>
-        <div class="col-md-6"><label class="form-label small fw-semibold">Expiración</label><input type="text" class="form-control" placeholder="MM/AA"></div>
-        <div class="col-md-6"><label class="form-label small fw-semibold">CVV</label><input type="password" class="form-control" placeholder="123" maxlength="4"></div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de la tarjeta</label>
+          <input type="text" class="form-control" placeholder="4532 •••• •••• 8920">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small fw-semibold">Fecha de expiración</label>
+          <input type="text" class="form-control" placeholder="MM/AA">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small fw-semibold">Código CVV</label>
+          <input type="password" class="form-control" placeholder="123" maxlength="4">
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Nombre en la tarjeta</label>
+          <input type="text" class="form-control" placeholder="Ej. Carlos Pérez">
+        </div>
       </div>
     `;
-  } else {
-    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu cuenta preferida de ${selectedMethod}.</p>`;
+  } else if (selectedMethod === 'PayPal') {
+    container.innerHTML = `
+      <p class="text-muted small">Ingresa tu cuenta vinculada para autorizar el cobro instantáneo mediante PayPal:</p>
+      <div class="mb-3">
+        <label class="form-label small fw-semibold">Correo Electrónico PayPal</label>
+        <input type="email" class="form-control" placeholder="tucuenta@paypal.com">
+      </div>
+    `;
+  } else if (selectedMethod === 'Daviplata') {
+    container.innerHTML = `
+      <div class="row g-3">
+        <div class="col-12">
+          <p class="text-muted small mb-2">Ingresa tu número celular registrado en Daviplata para recibir la notificación de cobro en tu celular:</p>
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de Celular Daviplata</label>
+          <input type="tel" class="form-control" placeholder="Ej. 310 123 4567" maxlength="10">
+        </div>
+        <div class="col-12">
+          <label class="form-label small fw-semibold">Número de Documento del Titular</label>
+          <input type="text" class="form-control" placeholder="Ej. 1012345678">
+        </div>
+      </div>
+    `;
+  } else if (selectedMethod === 'Transferencia QR') {
+    container.innerHTML = `
+      <div class="text-center py-2">
+        <h6 class="fw-bold mb-2">Escanea el código QR desde Nequi o Daviplata</h6>
+        <div class="bg-light p-3 rounded-4 d-inline-block border mb-2">
+          <span class="fs-1">📱📉</span>
+        </div>
+        <p class="text-muted small mb-0">O envía el pago al número celular <strong>+57 300 123 4567</strong> y confirma la orden.</p>
+      </div>
+    `;
   }
 }
 
-async function processMockPayment() {
-  if (!token) return notify('Por favor inicia sesión primero.');
-  if (userCartItems.length === 0) return notify('El carrito está vacío.');
+function processMockPayment() {
+  if (!token) {
+    notify('Por favor inicia sesión primero.');
+    return;
+  }
+  if (userCartItems.length === 0) {
+    notify('El carrito está vacío. Agrega un accesorio personalizado antes de continuar.');
+    return;
+  }
 
   const dataModalEl = $('paymentDataModal');
-  if (dataModalEl) (bootstrap.Modal.getInstance(dataModalEl) || new bootstrap.Modal(dataModalEl)).hide();
+  if (dataModalEl) {
+    const dataModal = bootstrap.Modal.getInstance(dataModalEl);
+    if (dataModal) dataModal.hide();
+  }
 
-  const totalAmount = calculateCartTotal();
-  try {
-    await api('/api/orders', {
-      method: 'POST',
-      body: JSON.stringify({ payment_method: selectedMethod, total_amount: totalAmount })
-    });
-    notify(`🎉 ¡Pago de ${formatCOP(totalAmount)} registrado con éxito!`, true);
-    await loadDesigns();
-  } catch (err) {
-    notify(err.message);
+  if ($('modalPayMethod'))$('modalPayMethod').textContent = selectedMethod;
+  const paymentModalEl = $('paymentModal');
+  if (paymentModalEl) {
+    const modal = new bootstrap.Modal(paymentModalEl);
+    modal.show();
+
+    setTimeout(() => {
+      modal.hide();
+      notify(`🎉 ¡Pago completado con éxito mediante ${selectedMethod}! Tu orden ha sido procesada.`, true);
+    }, 2200);
   }
 }
 
@@ -1137,6 +1242,7 @@ function setMode(next, button) {
   document.querySelectorAll('#loginScreen .btn-group button').forEach(b => b.classList.remove('active')); 
   button.classList.add('active'); 
   if ($('nameWrap'))$('nameWrap').classList.toggle('d-none', next === 'login'); 
+  if ($('name'))$('name').required = next === 'register'; 
   if ($('authButton'))$('authButton').textContent = next === 'login' ? 'Entrar a mi cuenta' : 'Crear mi cuenta'; 
 }
 
@@ -1159,12 +1265,31 @@ function updatePreview() {
 
   if ($('prevPetName'))$('prevPetName').textContent = petName;
   if ($('prevEngraving'))$('prevEngraving').textContent = engraving;
+
   if ($('lblSize'))$('lblSize').textContent = size;
   if ($('lblColor'))$('lblColor').textContent = color;
   if ($('lblType'))$('lblType').textContent = type.split(' ')[0];
   if ($('lblPetType'))$('lblPetType').textContent = petType;
-  if (petImages && petImages[petType] && $('prevPetImg'))$('prevPetImg').src = petImages[petType];
-  if (color && colorMap[color] && $('prevStrap'))$('prevStrap').style.backgroundColor = colorMap[color];
+
+  if (petImages && petImages[petType] && $('prevPetImg')) {$('prevPetImg').src = petImages[petType];
+  }
+
+  if (color && colorMap[color] && $('prevStrap')) {$('prevStrap').style.backgroundColor = colorMap[color];
+  }
+
+  if ($('prevStrap')) {
+    if (type.includes('Placa')) {
+      $('prevStrap').style.height = '10px';$('prevStrap').style.opacity = '0.4';
+    } else if (type.includes('Arnés')) {
+      $('prevStrap').style.height = '36px';$('prevStrap').style.opacity = '1';
+    } else {
+      $('prevStrap').style.height = '26px';$('prevStrap').style.opacity = '1';
+    }
+  }
+
+  const sizeScales = { 'XXS': 0.75, 'XS': 0.85, 'S': 0.95, 'M': 1.05, 'L': 1.15, 'XL': 1.25, 'XXL': 1.35 };
+  const scale = sizeScales[size] || 1.0;
+  if ($('prevTag'))$('prevTag').style.transform = `scale(${scale})`;
 }
 
 async function loadCatalog() { 
@@ -1182,7 +1307,7 @@ async function loadCatalog() {
       }
     });
   } catch (err) {
-    console.error("Error catálogo:", err);
+    console.error("Error al cargar catálogo:", err);
   }
 }
 
@@ -1194,23 +1319,45 @@ async function loadCatalog() {
 
 if ($('authForm')) {$('authForm').onsubmit = async e => {
     e.preventDefault(); 
+    const modalEl = $('authProcessModal');
+    let processModal = null;
+    
+    if (modalEl) {
+      processModal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+      if ($('authProcessTitle'))$('authProcessTitle').textContent = mode === 'login' ? 'Verificando cuenta...' : 'Creando tu perfil...';
+      if ($('authProcessSubtitle'))$('authProcessSubtitle').textContent = 'Conectando de forma segura con los servidores de LuxPet...';
+      processModal.show();
+    }
+
     try { 
-      const payload = { email: $('email').value, password:$('password').value };
-      if (mode === 'register') payload.name = $('name').value;
+      const payload = {
+        email: $('email').value,
+        password: $('password').value
+      };
+      if (mode === 'register') {
+        payload.name = $('name').value;
+      }
 
       const data = await api(`/api/auth/${mode === 'login' ? 'login' : 'register'}`, {
         method: 'POST',
         body: JSON.stringify(payload)
       });
       
-      token = data.access_token; 
-      currentUser = data.user;
-      localStorage.setItem('luxpet_token', token); 
-      notify(data.message, true); 
-      showDashboard();
-      await loadDesigns(); 
+      setTimeout(async () => {
+        if (processModal) processModal.hide();
+        token = data.access_token; 
+        currentUser = data.user;
+        localStorage.setItem('luxpet_token', token); 
+        notify(data.message, true); 
+        showDashboard();
+        await loadDesigns(); 
+      }, 800);
+
     } catch(error) { 
-      notify(error.message); 
+      setTimeout(() => {
+        if (processModal) processModal.hide();
+        notify(error.message); 
+      }, 400);
     } 
   };
 }
@@ -1238,8 +1385,10 @@ function showDashboard() {
       </div>
     `;
   }
+
   if ($('sbUserName'))$('sbUserName').textContent = currentUser?.name || 'Cliente LuxPet';
   if ($('sbUserEmail'))$('sbUserEmail').textContent = currentUser?.email || '';
+  if ($('sbCartCount'))$('sbCartCount').textContent = userCartItems.length;
 }
 
 if ($('designForm')) {$('designForm').onsubmit = async e => {
@@ -1261,7 +1410,9 @@ if ($('designForm')) {$('designForm').onsubmit = async e => {
       e.target.reset(); 
       updatePreview();
       await loadDesigns(); 
-    } catch(error) { notify(error.message); } 
+    } catch(error) { 
+      notify(error.message); 
+    } 
   };
 }
 
@@ -1270,7 +1421,10 @@ async function removeFromCart(itemId) {
     const res = await api(`/api/customizations/${itemId}`, { method: 'DELETE' });
     notify(res.message || 'Producto eliminado del carrito.', true);
     await loadDesigns();
-  } catch (error) { notify(error.message); }
+    openCartModal(); 
+  } catch (error) {
+    notify(error.message);
+  }
 }
 
 function calculateCartTotal() {
@@ -1284,23 +1438,56 @@ function formatCOP(amount) {
 function openCartModal() {
   const modalList = $('cartModalList');
   const total = calculateCartTotal();
+  
   if (modalList) {
-    modalList.innerHTML = userCartItems.length === 0 ? '<p class="text-center py-4 text-muted">Tu carrito está vacío.</p>' :
-      userCartItems.map(item => `
-        <div class="d-flex align-items-center justify-content-between p-3 mb-2 bg-light rounded-3 border">
-          <div><h6 class="mb-0 fw-bold">${item.accessory_type} - ${item.pet_name}</h6><small class="text-muted">${item.color} | Talla ${item.size}</small></div>
-          <button class="btn btn-sm btn-outline-danger" onclick="removeFromCart(${item.id})">❌</button>
-        </div>
-      `).join('');
+    if (userCartItems.length === 0) {
+      modalList.innerHTML = `
+        <div class="text-center py-4 text-muted">
+          <span class="fs-1 d-block mb-2">🛍️</span>
+          <p class="mb-0">Tu carrito está vacío.</p>
+          <small>Diseña un accesorio personalizado para agregarlo aquí.</small>
+        </div>`;
+    } else {
+      modalList.innerHTML = userCartItems.map(item => {
+        const hexColor = colorMap[item.color] || '#d4af37';
+        const itemPrice = prices[item.accessory_type] || 45000;
+        return `
+          <div class="d-flex align-items-center justify-content-between p-3 mb-2 bg-light rounded-3 border">
+            <div class="d-flex align-items-center gap-3">
+              <div class="cart-item-preview" style="background-color: ${hexColor};">
+                🐾
+              </div>
+              <div>
+                <h6 class="mb-0 fw-bold">${item.accessory_type} (${item.pet_type || 'Mascota'}) - ${item.pet_name}</h6>
+                <small class="text-muted">Color: ${item.color} | Talla: ${item.size} ${item.engraving ? '| Grabado: '+item.engraving : ''}</small>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+              <strong class="text-dark">${formatCOP(itemPrice)}</strong>
+              <button class="btn btn-sm btn-outline-danger border-0 rounded-circle p-1" onclick="removeFromCart(${item.id})" title="Quitar del carrito">
+                ❌
+              </button>
+            </div>
+          </div>`;
+      }).join('');
+    }
   }
+
   if ($('cartModalTotal'))$('cartModalTotal').textContent = formatCOP(total);
   const cartModalEl = $('cartModal');
-  if (cartModalEl) (bootstrap.Modal.getInstance(cartModalEl) || new bootstrap.Modal(cartModalEl)).show();
+  if (cartModalEl) {
+    let modal = bootstrap.Modal.getInstance(cartModalEl);
+    if (!modal) modal = new bootstrap.Modal(cartModalEl);
+    modal.show();
+  }
 }
 
 function goToCheckout() {
-  const modalEl = $('cartModal');
-  if (modalEl) (bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl)).hide();
+  const modalEl = document.getElementById('cartModal');
+  if (modalEl) {
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+  }
   mostrarMetodoPago(true);
 }
 
@@ -1308,20 +1495,40 @@ async function loadDesigns() {
   if(!token) return; 
   try { 
     userCartItems = await api('/api/customizations'); 
+    
+    if (userCartItems.length > 0) {
+      mostrarMetodoPago(false);
+    }
+
     if ($('navCartCount'))$('navCartCount').textContent = userCartItems.length;
     if ($('sbCartCount'))$('sbCartCount').textContent = userCartItems.length;
-    if ($('checkoutTotalAmount'))$('checkoutTotalAmount').textContent = formatCOP(calculateCartTotal());
+
+    const totalAmount = calculateCartTotal();
+    if ($('checkoutTotalAmount'))$('checkoutTotalAmount').textContent = formatCOP(totalAmount);
+
+    if ($('designs')) {$('designs').innerHTML = userCartItems.length ?
+        '<hr><h3 class="h6 mb-3 fw-bold">Productos Agregados al Carrito</h3>' + userCartItems.map(x => `
+          <div class="d-flex justify-content-between align-items-center border-bottom py-2 small">
+            <div><strong>🐾 ${x.pet_name}</strong> (${x.pet_type || 'Mascota'}) · <span class="text-muted">${x.accessory_type}</span></div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge bg-light text-dark border">${x.color} · Talla ${x.size} · ${formatCOP(prices[x.accessory_type] || 45000)}</span>
+              <button class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFromCart(${x.id})" title="Eliminar">🗑️</button>
+            </div>
+          </div>`).join('')
+        : '<p class="small text-muted">Aún no tienes productos en el carrito.</p>'; 
+    }
   } catch (err) { 
     localStorage.removeItem('luxpet_token'); 
     token = null; 
+    location.reload();
   } 
 }
 
+// Inicialización de la aplicación
 (async function init() {
   await loadCatalog();
   if (token) {
     try {
-      currentUser = await api('/api/user/me');
       await loadDesigns();
       showDashboard();
     } catch {
@@ -1336,6 +1543,210 @@ async function loadDesigns() {
 """
 
 # ==============================================================================
+# CÓDIGO ADICIONAL (EXTENSIÓN DE FUNCIONALIDAD SIN MODIFICAR LO ANTERIOR)
+# ==============================================================================
+
+class CustomizationUpdate(BaseModel):
+    accessory_type: str
+    pet_name: str = Field(min_length=1, max_length=40)
+    pet_type: str = Field(default="Perro")
+    color: str
+    size: str
+    engraving: str = Field(default="", max_length=80)
+
+
+class OrderCreate(BaseModel):
+    payment_method: str
+    total_amount: float
+
+
+# Extensión del esquema de base de datos para registrar órdenes completadas
+def initialize_orders_database() -> None:
+    with get_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                payment_method TEXT NOT NULL,
+                total_amount REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Completado',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+
+# Ejecutamos la inicialización de la nueva tabla
+initialize_orders_database()
+
+
+@app.get("/api/user/me")
+def get_user_profile(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+    return {
+        "id": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "created_at": user["created_at"],
+    }
+
+
+@app.put("/api/customizations/{customization_id}")
+def update_customization(
+    customization_id: int,
+    customization: CustomizationUpdate,
+    user: sqlite3.Row = Depends(current_user),
+) -> dict[str, Any]:
+    if customization.accessory_type not in ACCESSORY_TYPES:
+        raise HTTPException(status_code=422, detail="Tipo de accesorio no válido.")
+    if customization.pet_type not in PET_TYPES:
+        raise HTTPException(status_code=422, detail="Tipo de mascota no válido.")
+    if customization.color not in COLORS:
+        raise HTTPException(status_code=422, detail="Color no disponible.")
+    if customization.size not in SIZES:
+        raise HTTPException(status_code=422, detail="Talla no disponible.")
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE customizations
+            SET accessory_type = ?, pet_name = ?, pet_type = ?, color = ?, size = ?, engraving = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                customization.accessory_type,
+                customization.pet_name.strip(),
+                customization.pet_type,
+                customization.color,
+                customization.size,
+                customization.engraving.strip(),
+                customization_id,
+                user["id"],
+            ),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Diseño no encontrado en tu carrito.")
+
+        updated = connection.execute(
+            "SELECT * FROM customizations WHERE id = ?", (customization_id,)
+        ).fetchone()
+
+    return {"message": "¡Diseño actualizado exitosamente!", "customization": dict(updated)}
+
+
+@app.post("/api/orders", status_code=status.HTTP_201_CREATED)
+def create_order(
+    order_data: OrderCreate,
+    user: sqlite3.Row = Depends(current_user),
+) -> dict[str, Any]:
+    with get_connection() as connection:
+        # Verificar que el usuario tenga items en el carrito
+        cart_items = connection.execute(
+            "SELECT * FROM customizations WHERE user_id = ?", (user["id"],)
+        ).fetchall()
+
+        if not cart_items:
+            raise HTTPException(
+                status_code=400, detail="No puedes procesar una orden con el carrito vacío."
+            )
+
+        # Registrar la orden
+        cursor = connection.execute(
+            """
+            INSERT INTO orders (user_id, payment_method, total_amount)
+            VALUES (?, ?, ?)
+            """,
+            (user["id"], order_data.payment_method, order_data.total_amount),
+        )
+        order_id = cursor.lastrowid
+
+        # Vaciar el carrito tras compra exitosa
+        connection.execute("DELETE FROM customizations WHERE user_id = ?", (user["id"],))
+
+    return {
+        "message": "¡Orden registrada con éxito!",
+        "order_id": order_id,
+        "payment_method": order_data.payment_method,
+        "total_amount": order_data.total_amount,
+    }
+
+
+@app.get("/api/orders")
+def list_orders(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# ==============================================================================
+# BASE DE DATOS Y PANEL DE ADMINISTRACIÓN (EXPANSIÓN)
+# ==============================================================================
+
+ADMIN_EMAIL = "julianjuanm@gmail.com"
+ADMIN_PASSWORD = "arroz1234"
+
+def init_admin_role_and_account() -> None:
+    with get_connection() as conn:
+        # Aseguramos columna role
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Crear o actualizar usuario Administrador Único
+        admin_user = conn.execute("SELECT id FROM users WHERE email = ?", (ADMIN_EMAIL,)).fetchone()
+        if not admin_user:
+            conn.execute(
+                "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
+                ("Administrador LuxPet", ADMIN_EMAIL, hash_password(ADMIN_PASSWORD))
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET role = 'admin', password_hash = ? WHERE id = ?",
+                (hash_password(ADMIN_PASSWORD), admin_user["id"])
+            )
+        conn.commit()
+
+# 1. Crear la estructura de las tablas en la base de datos primero
+initialize_database()
+
+# 2. Asignar/actualizar la cuenta del administrador
+init_admin_role_and_account()
+
+def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
+    if user["email"] != ADMIN_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso exclusivo para el Administrador Principal."
+        )
+    return user
+
+@app.get("/api/admin/metrics")
+def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+    with get_connection() as conn:
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        total_revenue = conn.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders").fetchone()[0]
+        recent_orders = conn.execute("""
+            SELECT o.id, u.name as user_name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
+            FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC LIMIT 20
+        """).fetchall()
+        all_users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
+
+    return {
+        "metrics": {
+            "users_count": total_users,
+            "orders_count": total_orders,
+            "total_revenue": total_revenue
+        },
+        "orders": [dict(r) for r in recent_orders],
+        "users": [dict(u) for u in all_users]
+    }
+
+# ==============================================================================
 # INYECCIÓN DINO-JS EN EL CLIENTE PARA MODO ADMINISTRADOR VISTA DEDICADA
 # ==============================================================================
 
@@ -1345,7 +1756,8 @@ ADMIN_SCRIPT_EXTENSION = """
   const oldShowDashboard = window.showDashboard;
   window.showDashboard = function() {
     if (oldShowDashboard) oldShowDashboard();
-    if (currentUser && (currentUser.email === 'julianjuanm@gmail.com' || currentUser.role === 'admin')) {
+    
+    if (currentUser && currentUser.email === 'julianjuanm@gmail.com') {
       renderAdminDashboard();
     }
   };
@@ -1358,6 +1770,7 @@ ADMIN_SCRIPT_EXTENSION = """
         adminSection = document.createElement('section');
         adminSection.id = 'adminSection';
         adminSection.className = 'container py-4 my-4';
+        
         const main = document.querySelector('main');
         if (main) main.insertBefore(adminSection, main.firstChild);
       }
@@ -1369,28 +1782,25 @@ ADMIN_SCRIPT_EXTENSION = """
               <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
               <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
             </div>
-            <div class="d-flex gap-2">
-              <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Ventas CSV</button>
-              <span class="fs-1">🛠️️</span>
-            </div>
+            <span class="fs-1">🛠️</span>
           </div>
 
           <div class="row g-3 mb-4 text-center">
             <div class="col-md-4">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase fw-bold">Clientes Registrados</small>
+                <small class="text-muted d-block uppercase">Usuarios Registrados</small>
                 <strong class="fs-2 text-dark">${data.metrics.users_count}</strong>
               </div>
             </div>
             <div class="col-md-4">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase fw-bold">Ventas Totales</small>
+                <small class="text-muted d-block uppercase">Ventas Completadas</small>
                 <strong class="fs-2 text-dark">${data.metrics.orders_count}</strong>
               </div>
             </div>
             <div class="col-md-4">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase fw-bold">Recaudación Total</small>
+                <small class="text-muted d-block uppercase">Recaudado Total</small>
                 <strong class="fs-2 text-success">${formatCOP(data.metrics.total_revenue)}</strong>
               </div>
             </div>
@@ -1398,10 +1808,10 @@ ADMIN_SCRIPT_EXTENSION = """
 
           <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
             <li class="nav-item">
-              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Gestión de Órdenes Globales</button>
+              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Órdenes Globales</button>
             </li>
             <li class="nav-item">
-              <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Gestión de Usuarios</button>
+              <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Lista de Usuarios</button>
             </li>
           </ul>
 
@@ -1415,7 +1825,7 @@ ADMIN_SCRIPT_EXTENSION = """
                       <th>Cliente</th>
                       <th>Método Pago</th>
                       <th>Monto</th>
-                      <th>Estado de la Orden</th>
+                      <th>Estado</th>
                       <th>Fecha</th>
                     </tr>
                   </thead>
@@ -1426,14 +1836,7 @@ ADMIN_SCRIPT_EXTENSION = """
                         <td><strong>${o.user_name}</strong><br><small class="text-muted">${o.email}</small></td>
                         <td>${o.payment_method}</td>
                         <td><strong>${formatCOP(o.total_amount)}</strong></td>
-                        <td>
-                          <select class="form-select form-select-sm" onchange="changeOrderStatus(${o.id}, this.value)">
-                            <option value="Completado" ${o.status==='Completado'?'selected':''}>Completado</option>
-                            <option value="En Producción" ${o.status==='En Producción'?'selected':''}>En Producción</option>
-                            <option value="Enviado" ${o.status==='Enviado'?'selected':''}>Enviado</option>
-                            <option value="Cancelado" ${o.status==='Cancelado'?'selected':''}>Cancelado</option>
-                          </select>
-                        </td>
+                        <td><span class="badge bg-success">${o.status}</span></td>
                         <td>${o.created_at}</td>
                       </tr>
                     `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas aún.</td></tr>'}
@@ -1452,7 +1855,6 @@ ADMIN_SCRIPT_EXTENSION = """
                       <th>Correo Electrónico</th>
                       <th>Rol</th>
                       <th>Fecha Registro</th>
-                      <th>Acción</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1463,9 +1865,6 @@ ADMIN_SCRIPT_EXTENSION = """
                         <td>${u.email}</td>
                         <td><span class="badge ${u.role==='admin'?'bg-danger':'bg-secondary'}">${u.role}</span></td>
                         <td>${u.created_at}</td>
-                        <td>
-                          ${u.email !== 'julianjuanm@gmail.com' ? `<button class="btn btn-sm btn-outline-danger border-0" onclick="deleteUserByAdmin(${u.id})">🗑️ Eliminar</button>` : '<span class="text-muted">Propietario</span>'}
-                        </td>
                       </tr>
                     `).join('')}
                   </tbody>
@@ -1479,38 +1878,146 @@ ADMIN_SCRIPT_EXTENSION = """
       console.error('Error al cargar panel de administración:', err);
     }
   }
-
-  window.changeOrderStatus = async function(orderId, newStatus) {
-    try {
-      const res = await api(`/api/admin/orders/${orderId}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ status: newStatus })
-      });
-      notify(res.message, true);
-    } catch(err) {
-      notify(err.message);
-    }
-  };
-
-  window.deleteUserByAdmin = async function(userId) {
-    if (!confirm('¿Estás seguro de que deseas eliminar este usuario y todos sus registros asociadas?')) return;
-    try {
-      const res = await api(`/api/admin/users/${userId}`, { method: 'DELETE' });
-      notify(res.message, true);
-      renderAdminDashboard();
-    } catch(err) {
-      notify(err.message);
-    }
-  };
-
-  window.downloadCSVReport = function() {
-    window.open(`/api/admin/export/orders?token=${token}`, '_blank');
-  };
 })();
 </script>
 """
 
-
+# Se sobreescribe la respuesta HTML para integrar dinámicamente la interfaz de Administrador
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home_admin_extended() -> str:
     return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
+
+
+# ==============================================================================
+# SEGUNDA EXPANSIÓN (NUEVA): RESEÑAS, CUPONES Y SISTEMA DE ESTADO DE SERVIDOR
+# ==============================================================================
+
+class ReviewCreate(BaseModel):
+    accessory_type: str
+    rating: int = Field(ge=1, le=5)
+    comment: str = Field(min_length=3, max_length=250)
+
+
+class CouponValidate(BaseModel):
+    code: str = Field(min_length=3, max_length=20)
+
+
+def initialize_extended_features_db() -> None:
+    with get_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                accessory_type TEXT NOT NULL,
+                rating INTEGER NOT NULL,
+                comment TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS coupons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                discount_percentage REAL NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            );
+            """
+        )
+        # Inserción de cupón por defecto si no existe
+        connection.execute(
+            "INSERT OR IGNORE INTO coupons (code, discount_percentage) VALUES (?, ?)",
+            ("LUX10", 10.0)
+        )
+        connection.commit()
+
+initialize_extended_features_db()
+
+
+@app.post("/api/reviews", status_code=status.HTTP_201_CREATED)
+def create_review(
+    review: ReviewCreate,
+    user: sqlite3.Row = Depends(current_user),
+) -> dict[str, Any]:
+    if review.accessory_type not in ACCESSORY_TYPES:
+        raise HTTPException(status_code=422, detail="Tipo de accesorio no válido.")
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO reviews (user_id, accessory_type, rating, comment)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user["id"], review.accessory_type, review.rating, review.comment.strip()),
+        )
+        review_id = cursor.lastrowid
+
+    return {
+        "message": "¡Reseña publicada con éxito!",
+        "review_id": review_id,
+        "author": user["name"],
+    }
+
+
+@app.get("/api/reviews")
+def list_reviews(accessory_type: str | None = None) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        if accessory_type:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.accessory_type, r.rating, r.comment, r.created_at, u.name as user_name
+                FROM reviews r JOIN users u ON r.user_id = u.id
+                WHERE r.accessory_type = ? ORDER BY r.created_at DESC
+                """,
+                (accessory_type,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.accessory_type, r.rating, r.comment, r.created_at, u.name as user_name
+                FROM reviews r JOIN users u ON r.user_id = u.id
+                ORDER BY r.created_at DESC
+                """
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/coupons/validate")
+def validate_coupon(
+    coupon_data: CouponValidate,
+    user: sqlite3.Row = Depends(current_user),
+) -> dict[str, Any]:
+    code = coupon_data.code.strip().upper()
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM coupons WHERE code = ? AND active = 1", (code,)
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El código de descuento no existe o no se encuentra activo."
+        )
+
+    return {
+        "message": f"¡Cupón '{code}' aplicado exitosamente!",
+        "code": row["code"],
+        "discount_percentage": row["discount_percentage"],
+    }
+
+
+@app.get("/api/admin/system/status")
+def system_status(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+    with get_connection() as connection:
+        user_count = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        order_count = connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        review_count = connection.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
+
+    return {
+        "status": "Online",
+        "app_version": app.version,
+        "database_connected": True,
+        "stats": {
+            "users": user_count,
+            "orders": order_count,
+            "reviews": review_count,
+        },
+    }
