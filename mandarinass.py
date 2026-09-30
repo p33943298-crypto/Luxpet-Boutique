@@ -1108,7 +1108,7 @@ function renderPaymentForm() {
       </div>
     `;
   } else {
-    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu numero de telefono previamente establecido ${selectedMethod}.</p>`;
+    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu numero de telefono O Correo electronico previamente establecido ${selectedMethod}.</p>`;
   }
 }
 
