@@ -975,9 +975,9 @@ HOME_PAGE = """
             </div>
           </div>
           <div class="col-md-3">
-            <div class="pay-card text-center" onclick="selectPay(this, 'Numero de telefono')">
+            <div class="pay-card text-center" onclick="selectPay(this, 'Transferencia QR')">
               <div class="fs-2 mb-2">📱</div>
-              <strong class="d-block mb-1">Numero de telefono</strong>
+              <strong class="d-block mb-1">Transferencia QR</strong>
               <span class="text-muted small">Nequi / Daviplata</span>
             </div>
           </div>
@@ -1108,7 +1108,7 @@ function renderPaymentForm() {
       </div>
     `;
   } else {
-    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu numero de telefono O Correo electronico previamente establecido ${selectedMethod}.</p>`;
+    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu cuenta preferida de ${selectedMethod}.</p>`;
   }
 }
 
@@ -1371,7 +1371,7 @@ ADMIN_SCRIPT_EXTENSION = """
             </div>
             <div class="d-flex gap-2">
               <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Ventas CSV</button>
-              <span class="fs-1">🛠️️</span>
+              <span class="fs-1">🛠</span>
             </div>
           </div>
 
@@ -1514,3 +1514,133 @@ ADMIN_SCRIPT_EXTENSION = """
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home_admin_extended() -> str:
     return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
+
+# ==============================================================================
+# ADICIONES DE MEJORAS Y SEGURIDAD PEDIDAS (SIN ELIMINAR NI EDITAR LO ANTERIOR)
+# ==============================================================================
+
+import asyncio
+from enum import Enum
+from typing import Literal, Generator
+from fastapi import Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Standard JWT con PyJWT / python-jose fallback seguro
+try:
+    import jwt as pyjwt
+except ImportError:
+    pyjwt = None
+
+# 1. SEGURIDAD: EXIGIR VARIABLE DE ENTORNO LUXPET_SECRET_KEY
+STRICT_SECRET_KEY = os.getenv("LUXPET_SECRET_KEY")
+if not STRICT_SECRET_KEY:
+    # Lanza error si no se define la variable de entorno obligatoria
+    raise RuntimeError("SEGURIDAD CRÍTICA: Debes configurar la variable de entorno 'LUXPET_SECRET_KEY'.")
+
+# CONFIGURAR CORS Y MIDDLEWARES DE SEGURIDAD
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# RATE LIMITING BÁSICO
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app_inst, requests_limit: int = 10, window_seconds: int = 60):
+        super().__init__(app_inst)
+        self.requests_limit = requests_limit
+        self.window_seconds = window_seconds
+        self.clients: dict[str, list[float]] = {}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/api/auth/login" and request.method == "POST":
+            client_ip = request.client.host if request.client else "127.0.0.1"
+            now = time.time()
+            history = [t for t in self.clients.get(client_ip, []) if now - t < self.window_seconds]
+            if len(history) >= self.requests_limit:
+                return Response(
+                    content=json.dumps({"detail": "Demasiadas peticiones. Intenta de nuevo más tarde."}),
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    media_type="application/json"
+                )
+            history.append(now)
+            self.clients[client_ip] = history
+        return await call_next(request)
+
+app.add_middleware(RateLimitMiddleware)
+
+# COOKIE HTTPONLY EXTENSION
+@app.post("/api/v2/auth/login")
+def login_http_only(user: UserLogin, response: Response) -> dict[str, Any]:
+    res = login(user)
+    response.set_cookie(
+        key="access_token",
+        value=res["access_token"],
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=TOKEN_TTL_SECONDS
+    )
+    return res
+
+# DECÓDER JWT OFICIAL USANDO PYJWT SI ESTÁ INSTALADO
+def encode_token_secure(user_id: int) -> str:
+    if pyjwt:
+        payload = {"sub": str(user_id), "exp": int(time.time()) + TOKEN_TTL_SECONDS}
+        return pyjwt.encode(payload, STRICT_SECRET_KEY, algorithm="HS256")
+    return encode_token(user_id)
+
+def decode_token_secure(token: str) -> int:
+    if pyjwt:
+        try:
+            payload = pyjwt.decode(token, STRICT_SECRET_KEY, algorithms=["HS256"])
+            return int(payload["sub"])
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido o expirado.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return decode_token(token)
+
+# 2. BASE DE DATOS: ACTIVACIÓN DE FOREIGN KEYS Y CONEXIÓN / POOL SAFE
+def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
+    conn = sqlite3.connect(DATABASE_PATH, timeout=15.0)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+# 3. REUTILIZACIÓN Y MODELADO REFACTORIZADO
+def common_email_validator(value: str) -> str:
+    normalized = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+        raise ValueError("Introduce un correo válido.")
+    return normalized
+
+# MODELOS REUTILIZABLES CON LITERAL / ENUMS
+SizeEnum = Literal["XXS", "XS", "S", "M", "L", "XL", "XXL"]
+AccessoryEnum = Literal["Placa Grabada", "Collar de Cuero", "Arnés Confort"]
+ColorEnum = Literal["Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache"]
+
+class BaseCustomizationModel(BaseModel):
+    accessory_type: AccessoryEnum
+    pet_name: str = Field(min_length=1, max_length=40)
+    pet_type: str = Field(default="Perro")
+    color: ColorEnum
+    size: SizeEnum
+    engraving: str = Field(default="", max_length=80)
+
+# Unificación reutilizable
+class CustomizationSchema(BaseCustomizationModel):
+    pass
+
+# 4. ESTRUCTURA Y ENVIROMENT (Python 3.11+ Types Ready)
+def get_user_profile_v2(user_id: int, conn: sqlite3.Connection = Depends(get_db_connection)) -> dict[str, Any] | None:
+    row = conn.execute("SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+    return dict(row) if row else None
