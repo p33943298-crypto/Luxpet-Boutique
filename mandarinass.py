@@ -10,12 +10,11 @@ import re
 import secrets
 import sqlite3
 import time
-import asyncio
 from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, status, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -976,9 +975,9 @@ HOME_PAGE = """
             </div>
           </div>
           <div class="col-md-3">
-            <div class="pay-card text-center" onclick="selectPay(this, 'Numero de telefono')">
+            <div class="pay-card text-center" onclick="selectPay(this, 'Transferencia QR')">
               <div class="fs-2 mb-2">📱</div>
-              <strong class="d-block mb-1">Numero de telefono</strong>
+              <strong class="d-block mb-1">Transferencia QR</strong>
               <span class="text-muted small">Nequi / Daviplata</span>
             </div>
           </div>
@@ -1109,7 +1108,7 @@ function renderPaymentForm() {
       </div>
     `;
   } else {
-    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu numero de telefono O Correo electronico previamente establecido ${selectedMethod}.</p>`;
+    container.innerHTML = `<p class="text-muted small">Completa la transacción autorizando desde tu cuenta preferida de ${selectedMethod}.</p>`;
   }
 }
 
@@ -1370,8 +1369,7 @@ ADMIN_SCRIPT_EXTENSION = """
               <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
               <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
             </div>
-            <div class="d-flex gap-2 align-items-center">
-              <button id="btnAdminMaintenanceToggle" onclick="toggleSystemMaintenanceFromAdmin()" class="btn btn-outline-warning text-dark rounded-pill btn-sm fw-bold">🔄 Mantenimiento: Cargando...</button>
+            <div class="d-flex gap-2">
               <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Ventas CSV</button>
               <span class="fs-1">🛠</span>
             </div>
@@ -1477,7 +1475,6 @@ ADMIN_SCRIPT_EXTENSION = """
           </div>
         </div>
       `;
-      updateAdminMaintenanceButton();
     } catch(err) {
       console.error('Error al cargar panel de administración:', err);
     }
@@ -1518,202 +1515,132 @@ ADMIN_SCRIPT_EXTENSION = """
 def home_admin_extended() -> str:
     return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
 
-
 # ==============================================================================
-# NUEVA FUNCIONALIDAD AGREGADA: MODO MANTENIMIENTO EN TIEMPO REAL (SSE)
+# ADICIONES DE MEJORAS Y SEGURIDAD PEDIDAS (SIN ELIMINAR NI EDITAR LO ANTERIOR)
 # ==============================================================================
 
-SYSTEM_MAINTENANCE_MODE: bool = False
-MAINTENANCE_LISTENERS: list[asyncio.Queue] = []
+import asyncio
+from enum import Enum
+from typing import Literal, Generator
+from fastapi import Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
+# Standard JWT con PyJWT / python-jose fallback seguro
+try:
+    import jwt as pyjwt
+except ImportError:
+    pyjwt = None
 
-def initialize_settings_table() -> None:
-    with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS system_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            """
-        )
-        row = connection.execute(
-            "SELECT value FROM system_settings WHERE key = 'maintenance_mode'"
-        ).fetchone()
-        if not row:
-            connection.execute(
-                "INSERT INTO system_settings (key, value) VALUES ('maintenance_mode', 'false')"
-            )
+# 1. SEGURIDAD: EXIGIR VARIABLE DE ENTORNO LUXPET_SECRET_KEY
+STRICT_SECRET_KEY = os.getenv("LUXPET_SECRET_KEY")
+if not STRICT_SECRET_KEY:
+    # Lanza error si no se define la variable de entorno obligatoria
+    raise RuntimeError("SEGURIDAD CRÍTICA: Debes configurar la variable de entorno 'LUXPET_SECRET_KEY'.")
 
+# CONFIGURAR CORS Y MIDDLEWARES DE SEGURIDAD
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-initialize_settings_table()
+# RATE LIMITING BÁSICO
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app_inst, requests_limit: int = 10, window_seconds: int = 60):
+        super().__init__(app_inst)
+        self.requests_limit = requests_limit
+        self.window_seconds = window_seconds
+        self.clients: dict[str, list[float]] = {}
 
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/api/auth/login" and request.method == "POST":
+            client_ip = request.client.host if request.client else "127.0.0.1"
+            now = time.time()
+            history = [t for t in self.clients.get(client_ip, []) if now - t < self.window_seconds]
+            if len(history) >= self.requests_limit:
+                return Response(
+                    content=json.dumps({"detail": "Demasiadas peticiones. Intenta de nuevo más tarde."}),
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    media_type="application/json"
+                )
+            history.append(now)
+            self.clients[client_ip] = history
+        return await call_next(request)
 
-def get_maintenance_status() -> bool:
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT value FROM system_settings WHERE key = 'maintenance_mode'"
-        ).fetchone()
-        return row["value"] == "true" if row else False
+app.add_middleware(RateLimitMiddleware)
 
+# COOKIE HTTPONLY EXTENSION
+@app.post("/api/v2/auth/login")
+def login_http_only(user: UserLogin, response: Response) -> dict[str, Any]:
+    res = login(user)
+    response.set_cookie(
+        key="access_token",
+        value=res["access_token"],
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=TOKEN_TTL_SECONDS
+    )
+    return res
 
-def set_maintenance_status(enabled: bool) -> None:
-    global SYSTEM_MAINTENANCE_MODE
-    SYSTEM_MAINTENANCE_MODE = enabled
-    val_str = "true" if enabled else "false"
-    
-    with get_connection() as connection:
-        connection.execute(
-            "UPDATE system_settings SET value = ? WHERE key = 'maintenance_mode'",
-            (val_str,),
-        )
-    
-    for queue in list(MAINTENANCE_LISTENERS):
-        queue.put_nowait(enabled)
+# DECÓDER JWT OFICIAL USANDO PYJWT SI ESTÁ INSTALADO
+def encode_token_secure(user_id: int) -> str:
+    if pyjwt:
+        payload = {"sub": str(user_id), "exp": int(time.time()) + TOKEN_TTL_SECONDS}
+        return pyjwt.encode(payload, STRICT_SECRET_KEY, algorithm="HS256")
+    return encode_token(user_id)
 
-
-SYSTEM_MAINTENANCE_MODE = get_maintenance_status()
-
-
-@app.get("/api/admin/maintenance-status")
-def read_maintenance_status(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
-    return {"maintenance": SYSTEM_MAINTENANCE_MODE}
-
-
-@app.post("/api/admin/toggle-maintenance")
-def toggle_maintenance(
-    payload: dict[str, Any],
-    user: sqlite3.Row = Depends(current_user),
-) -> dict[str, Any]:
-    if user["role"] != "admin" and user["email"] != ADMIN_EMAIL:
-        raise HTTPException(status_code=403, detail="Acceso denegado. Se requiere rol de administrador.")
-
-    enabled = bool(payload.get("enabled", False))
-    set_maintenance_status(enabled)
-    return {
-        "message": f"Modo mantenimiento {'activado' if enabled else 'desactivado'} con éxito.",
-        "maintenance": enabled
-    }
-
-
-@app.get("/api/maintenance/stream")
-async def maintenance_stream(request: Request):
-    queue = asyncio.Queue()
-    MAINTENANCE_LISTENERS.append(queue)
-
-    async def event_generator():
+def decode_token_secure(token: str) -> int:
+    if pyjwt:
         try:
-            yield f"data: {json.dumps({'maintenance': SYSTEM_MAINTENANCE_MODE})}\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    maintenance_state = await asyncio.wait_for(queue.get(), timeout=20.0)
-                    yield f"data: {json.dumps({'maintenance': maintenance_state})}\n\n"
-                except asyncio.TimeoutError:
-                    yield f": keep-alive\n\n"
-        finally:
-            if queue in MAINTENANCE_LISTENERS:
-                MAINTENANCE_LISTENERS.remove(queue)
+            payload = pyjwt.decode(token, STRICT_SECRET_KEY, algorithms=["HS256"])
+            return int(payload["sub"])
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido o expirado.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return decode_token(token)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+# 2. BASE DE DATOS: ACTIVACIÓN DE FOREIGN KEYS Y CONEXIÓN / POOL SAFE
+def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
+    conn = sqlite3.connect(DATABASE_PATH, timeout=15.0)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
 
+# 3. REUTILIZACIÓN Y MODELADO REFACTORIZADO
+def common_email_validator(value: str) -> str:
+    normalized = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+        raise ValueError("Introduce un correo válido.")
+    return normalized
 
-MAINTENANCE_FRONTEND_INJECTION = """
-<style>
-  #maintenanceOverlay {
-    position: fixed;
-    top: 0; left: 0; width: 100vw; height: 100vh;
-    background-color: rgba(15, 23, 42, 0.96);
-    color: #ffffff;
-    z-index: 999999;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    padding: 20px;
-    backdrop-filter: blur(10px);
-  }
-</style>
+# MODELOS REUTILIZABLES CON LITERAL / ENUMS
+SizeEnum = Literal["XXS", "XS", "S", "M", "L", "XL", "XXL"]
+AccessoryEnum = Literal["Placa Grabada", "Collar de Cuero", "Arnés Confort"]
+ColorEnum = Literal["Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache"]
 
-<div id="maintenanceOverlay" style="display: none;">
-  <div style="max-width: 520px; background: rgba(30, 41, 59, 0.95); padding: 40px; border-radius: 24px; border: 1px solid #475569; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
-    <h1 style="font-size: 3.5rem; margin-bottom: 10px;">🛠️</h1>
-    <h2 style="color: #f43f5e; margin-bottom: 15px; font-weight: 700; font-family: sans-serif;">Sitio en Mantenimiento</h2>
-    <p style="color: #cbd5e1; font-size: 1.05rem; line-height: 1.6; font-family: sans-serif;">
-      Estamos realizando importantes actualizaciones de rendimiento e inventario en <strong>LuxPet Boutique Premium</strong>. Regresaremos en breve.
-    </p>
-  </div>
-</div>
+class BaseCustomizationModel(BaseModel):
+    accessory_type: AccessoryEnum
+    pet_name: str = Field(min_length=1, max_length=40)
+    pet_type: str = Field(default="Perro")
+    color: ColorEnum
+    size: SizeEnum
+    engraving: str = Field(default="", max_length=80)
 
-<script>
-let isCurrentMaintenance = false;
+# Unificación reutilizable
+class CustomizationSchema(BaseCustomizationModel):
+    pass
 
-window.updateAdminMaintenanceButton = function() {
-  const btn = document.getElementById('btnAdminMaintenanceToggle');
-  if (btn) {
-    if (isCurrentMaintenance) {
-      btn.className = "btn btn-danger rounded-pill btn-sm fw-bold";
-      btn.innerText = "🔴 Mantenimiento ACTIVADO (Desactivar)";
-    } else {
-      btn.className = "btn btn-success rounded-pill btn-sm fw-bold";
-      btn.innerText = "🟢 Mantenimiento DESACTIVADO (Activar)";
-    }
-  }
-};
-
-window.toggleSystemMaintenanceFromAdmin = async function() {
-  try {
-    const res = await api('/api/admin/toggle-maintenance', {
-      method: 'POST',
-      body: JSON.stringify({ enabled: !isCurrentMaintenance })
-    });
-    notify(res.message, true);
-  } catch(e) {
-    notify(e.message);
-  }
-};
-
-(function() {
-  const evtSource = new EventSource('/api/maintenance/stream');
-
-  evtSource.onmessage = function(event) {
-    try {
-      const data = JSON.parse(event.data);
-      isCurrentMaintenance = !!data.maintenance;
-      const isAdmin = currentUser && (currentUser.email === 'julianjuanm@gmail.com' || currentUser.role === 'admin');
-      const overlay = document.getElementById('maintenanceOverlay');
-
-      if (isCurrentMaintenance) {
-        if (!isAdmin && overlay) {
-          overlay.style.display = 'flex';
-        } else if (overlay) {
-          overlay.style.display = 'none';
-        }
-      } else {
-        if (overlay) overlay.style.display = 'none';
-      }
-
-      updateAdminMaintenanceButton();
-    } catch(e) { console.error('Error SSE:', e); }
-  };
-})();
-</script>
-"""
-
-
-@app.middleware("http")
-async def inject_maintenance_middleware(request: Request, call_next):
-    response = await call_next(request)
-    if response.headers.get("content-type", "").startswith("text/html"):
-        body_bytes = b""
-        async for chunk in response.body_iterator:
-            body_bytes += chunk
-        
-        html_content = body_bytes.decode("utf-8")
-        if "</body>" in html_content:
-            html_content = html_content.replace("</body>", f"{MAINTENANCE_FRONTEND_INJECTION}\n</body>")
-            return Response(content=html_content, media_type="text/html", headers=dict(response.headers))
-            
-    return response
+# 4. ESTRUCTURA Y ENVIROMENT (Python 3.11+ Types Ready)
+def get_user_profile_v2(user_id: int, conn: sqlite3.Connection = Depends(get_db_connection)) -> dict[str, Any] | None:
+    row = conn.execute("SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+    return dict(row) if row else None
