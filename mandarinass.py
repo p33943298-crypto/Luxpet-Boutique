@@ -1075,7 +1075,7 @@ function notify(message, good=false) {
 }
 
 function barkDog() {
-  notify('🐾 ¡Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
+  notify('🐾 !Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
 }
 
 function selectPay(el, method) {
@@ -1346,6 +1346,11 @@ ADMIN_SCRIPT_EXTENSION = """
     }
   };
 
+  window.refreshAdminDashboard = async function() {
+    notify('Sincronizando registros nuevos...', true);
+    await renderAdminDashboard();
+  };
+
   async function renderAdminDashboard() {
     try {
       const data = await api('/api/admin/metrics');
@@ -1366,6 +1371,7 @@ ADMIN_SCRIPT_EXTENSION = """
               <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
             </div>
             <div class="d-flex gap-2">
+              <button onclick="refreshAdminDashboard()" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Actualizar Registros</button>
               <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Ventas CSV</button>
               <span class="fs-1">🛠</span>
             </div>
