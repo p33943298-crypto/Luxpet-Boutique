@@ -1335,10 +1335,6 @@ async function loadDesigns() {
 </html>
 """
 
-# ==============================================================================
-# INYECCIÓN DINO-JS EN EL CLIENTE PARA MODO ADMINISTRADOR VISTA DEDICADA
-# ==============================================================================
-
 ADMIN_SCRIPT_EXTENSION = """
 <script>
 (function() {
@@ -1515,6 +1511,7 @@ ADMIN_SCRIPT_EXTENSION = """
 def home_admin_extended() -> str:
     return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
 
+
 # ==============================================================================
 # ADICIONES DE MEJORAS Y SEGURIDAD PEDIDAS (SIN ELIMINAR NI EDITAR LO ANTERIOR)
 # ==============================================================================
@@ -1526,19 +1523,15 @@ from fastapi import Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Standard JWT con PyJWT / python-jose fallback seguro
 try:
     import jwt as pyjwt
 except ImportError:
     pyjwt = None
 
-# 1. SEGURIDAD: EXIGIR VARIABLE DE ENTORNO LUXPET_SECRET_KEY
 STRICT_SECRET_KEY = os.getenv("LUXPET_SECRET_KEY")
 if not STRICT_SECRET_KEY:
-    # Lanza error si no se define la variable de entorno obligatoria
     raise RuntimeError("SEGURIDAD CRÍTICA: Debes configurar la variable de entorno 'LUXPET_SECRET_KEY'.")
 
-# CONFIGURAR CORS Y MIDDLEWARES DE SEGURIDAD
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1547,7 +1540,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# RATE LIMITING BÁSICO
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app_inst, requests_limit: int = 10, window_seconds: int = 60):
         super().__init__(app_inst)
@@ -1572,7 +1564,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RateLimitMiddleware)
 
-# COOKIE HTTPONLY EXTENSION
 @app.post("/api/v2/auth/login")
 def login_http_only(user: UserLogin, response: Response) -> dict[str, Any]:
     res = login(user)
@@ -1586,7 +1577,6 @@ def login_http_only(user: UserLogin, response: Response) -> dict[str, Any]:
     )
     return res
 
-# DECÓDER JWT OFICIAL USANDO PYJWT SI ESTÁ INSTALADO
 def encode_token_secure(user_id: int) -> str:
     if pyjwt:
         payload = {"sub": str(user_id), "exp": int(time.time()) + TOKEN_TTL_SECONDS}
@@ -1606,8 +1596,7 @@ def decode_token_secure(token: str) -> int:
             )
     return decode_token(token)
 
-# 2. BASE DE DATOS: ACTIVACIÓN DE FOREIGN KEYS Y CONEXIÓN / POOL SAFE
-def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
+def get_db_connection_safe() -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(DATABASE_PATH, timeout=15.0)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
@@ -1616,14 +1605,12 @@ def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
     finally:
         conn.close()
 
-# 3. REUTILIZACIÓN Y MODELADO REFACTORIZADO
 def common_email_validator(value: str) -> str:
     normalized = value.strip().lower()
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
         raise ValueError("Introduce un correo válido.")
     return normalized
 
-# MODELOS REUTILIZABLES CON LITERAL / ENUMS
 SizeEnum = Literal["XXS", "XS", "S", "M", "L", "XL", "XXL"]
 AccessoryEnum = Literal["Placa Grabada", "Collar de Cuero", "Arnés Confort"]
 ColorEnum = Literal["Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache"]
@@ -1636,11 +1623,85 @@ class BaseCustomizationModel(BaseModel):
     size: SizeEnum
     engraving: str = Field(default="", max_length=80)
 
-# Unificación reutilizable
 class CustomizationSchema(BaseCustomizationModel):
     pass
 
-# 4. ESTRUCTURA Y ENVIROMENT (Python 3.11+ Types Ready)
-def get_user_profile_v2(user_id: int, conn: sqlite3.Connection = Depends(get_db_connection)) -> dict[str, Any] | None:
+def get_user_profile_v2(user_id: int, conn: sqlite3.Connection = Depends(get_db_connection_safe)) -> dict[str, Any] | None:
     row = conn.execute("SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
     return dict(row) if row else None
+
+
+# ==============================================================================
+# INTEGRACIÓN DE BASE DE DATOS AVANZADA (PostgreSQL / SQLAlchemy)
+# ==============================================================================
+
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, text
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./luxpet_advanced.db")
+
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class DBUser(Base):
+    __tablename__ = "users_v2"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(80), nullable=False)
+    email = Column(String(120), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), default="client", nullable=False)
+    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+    customizations = relationship("DBCustomization", back_populates="user", cascade="all, delete-orphan")
+    orders = relationship("DBOrder", back_populates="user", cascade="all, delete-orphan")
+
+
+class DBCustomization(Base):
+    __tablename__ = "customizations_v2"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users_v2.id", ondelete="CASCADE"), nullable=False)
+    accessory_type = Column(String(50), nullable=False)
+    pet_name = Column(String(40), nullable=False)
+    pet_type = Column(String(30), default="Perro", nullable=False)
+    color = Column(String(50), nullable=False)
+    size = Column(String(10), nullable=False)
+    engraving = Column(String(80), default="", nullable=False)
+    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+    user = relationship("DBUser", back_populates="customizations")
+
+
+class DBOrder(Base):
+    __tablename__ = "orders_v2"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users_v2.id", ondelete="CASCADE"), nullable=False)
+    payment_method = Column(String(50), nullable=False)
+    total_amount = Column(Float, nullable=False)
+    status = Column(String(30), default="Completado", nullable=False)
+    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+    user = relationship("DBUser", back_populates="orders")
+
+
+def init_sqlalchemy_database() -> None:
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Aviso al inicializar tablas SQLAlchemy: {e}")
+
+def get_db_session() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+init_sqlalchemy_database()
