@@ -49,14 +49,24 @@ COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Lux
 
 PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Loro", "Cobaya", "Capibara", "Erizo")
 
-# Función auxiliar para convertir imágenes locales a Base64 de forma segura y garantizada
+# Función mejorada que busca con flexibilidad de nombres y avisa en consola si falta el archivo
 def get_base64_image(filename: str) -> str:
     file_path = STATIC_DIR / filename
+    # Si el archivo exacto no existe, intentamos buscar variantes comunes (con/sin tildes o extensiones)
+    if not file_path.exists():
+        for ext in [".jpg", ".jpeg", ".png", ".JPG"]:
+            alt_path = STATIC_DIR / f"{Path(filename).stem}{ext}"
+            if alt_path.exists():
+                file_path = alt_path
+                break
+                
     if file_path.exists():
         with open(file_path, "rb") as image_file:
             encoded = base64.b64encode(image_file.read()).decode("utf-8")
             return f"data:image/jpeg;base64,{encoded}"
-    return "/static/Logo principal.jpg"
+    
+    print(f"⚠️ ADVERTENCIA: No se encontró la imagen local '{filename}' en la carpeta static.")
+    return "/static/Logo dorado.jpg"
 
 PET_IMAGES = {
     "Perro": get_base64_image("perro.jpg"),
