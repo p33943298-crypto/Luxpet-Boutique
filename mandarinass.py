@@ -49,26 +49,41 @@ COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Lux
 
 PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Loro", "Cobaya", "Capibara", "Erizo")
 
+# Función segura en Base64 para evitar errores de tildes y espacios en archivos locales
+def get_base64_image(filename: str) -> str:
+    file_path = STATIC_DIR / filename
+    if not file_path.exists():
+        for ext in [".jpg", ".jpeg", ".png", ".JPG", ".PNG"]:
+            alt_path = STATIC_DIR / f"{Path(filename).stem}{ext}"
+            if alt_path.exists():
+                file_path = alt_path
+                break
+    if file_path.exists():
+        with open(file_path, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("utf-8")
+            return f"data:image/jpeg;base64,{encoded}"
+    return "/static/Logo dorado.jpg"
+
 PET_IMAGES = {
-    "Perro": "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80",
-    "Gato": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=300&q=80",
-    "Conejo": "https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=300&q=80",
-    "Hámster": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS1p9zHrS4vacaPMMXPwJTaFIwOfxXCfEIwRl26WTm4qg&s=10",
-    "Hurón": "https://www.clinicaveterinariazarpa.com/wp-content/uploads/2019/04/huron-cuidados-basicos-veterinario.jpg",
-    "Loro": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQebDUS5U76EagNt8m7AP159B41i1YRnHOheNSrxtqvZOhmCEnwS8eU2JE&s=10",
-    "Cobaya": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRdHHZ9xrQfd2w5Cft2Ev_BPC21t7hjzK-9iyvhce76sQ&s=10",
-    "Capibara": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE32LihXG7e2E31yQqDiEsEnXt_AzmfG0qDF-gchBubA&s=10",
-    "Erizo": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSbQdAjoQMnTfbUa--3D-JcRG531VbWeD-VIRaWLt_97XEq9SJdY7Noks-Y&s=10"
+    "Perro": get_base64_image("perro.jpg"),
+    "Gato": get_base64_image("gato.jpg"),
+    "Conejo": get_base64_image("conejo.jpg"),
+    "Hámster": get_base64_image("Hamster.jpg"),
+    "Hurón": get_base64_image("huron.jpg"),
+    "Loro": get_base64_image("loro.jpg"),
+    "Cobaya": get_base64_image("cobaya.jpg"),
+    "Capibara": get_base64_image("capibara.jpg"),
+    "Erizo": get_base64_image("erizo.jpg")
 }
 
 PRODUCT_IMAGES = {
-    "Placa Grabada": "/static/Placas%20Confort%203D.jpg",
-    "Collar de Cuero": "/static/Coleccion%20Velvet%20Gold.jpg",
-    "Arnés Confort": "/static/Arnes%20Ergonomico.jpg",
-    "Correa Elegance 3m": "/static/Coleccion%20Velvet%20Gold.jpg",
-    "Bandana de Seda": "/static/Bandana%20de%20Seda.jpg",
-    "Moño de Gala": "/static/Mo%C3%B1o%20de%20Gala.jpg",
-    "Cama Oropel": "/static/Cama%20Oropel.jpg"
+    "Placa Grabada": get_base64_image("Placas Confort 3D.jpg"),
+    "Collar de Cuero": get_base64_image("Coleccion Velvet Gold.jpg"),
+    "Arnés Confort": get_base64_image("Arnes Ergonomico.jpg"),
+    "Correa Elegance 3m": get_base64_image("Coleccion Velvet Gold.jpg"),
+    "Bandana de Seda": get_base64_image("Bandana de Seda.jpg"),
+    "Moño de Gala": get_base64_image("Moño de Gala.jpg"),
+    "Cama Oropel": get_base64_image("Cama Oropel.jpg")
 }
 
 COLOR_MAP = {
@@ -930,11 +945,11 @@ HOME_PAGE = """
       <h6 class="fw-bold text-uppercase small text-muted mb-3">Galería y Estilos</h6>
       <div class="row g-2 mb-4">
         <div class="col-6 text-center">
-          <img src="/static/Coleccion%20Velvet%20Gold.jpg" class="catalog-grid-img" alt="Collar">
+          <img src="/static/Coleccion Velvet Gold.jpg" class="catalog-grid-img" alt="Collar">
           <span class="d-block small fw-semibold mt-1">Collares Velvet</span>
         </div>
         <div class="col-6 text-center">
-          <img src="/static/Placas%20Confort%203D.jpg" class="catalog-grid-img" alt="Placa">
+          <img src="/static/Placas Confort 3D.jpg" class="catalog-grid-img" alt="Placa">
           <span class="d-block small fw-semibold mt-1">Placas 3D</span>
         </div>
       </div>
@@ -1008,25 +1023,25 @@ HOME_PAGE = """
       <div class="row g-3">
         <div class="col-md-3">
           <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <img src="/static/Coleccion%20Velvet%20Gold.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Collar">
+            <img src="/static/Coleccion Velvet Gold.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Collar">
             <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Collares Velvet Gold</small></div>
           </div>
         </div>
         <div class="col-md-3">
           <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <img src="/static/Placas%20Confort%203D.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Placas">
+            <img src="/static/Placas Confort 3D.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Placas">
             <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Placas Grabadas 3D</small></div>
           </div>
         </div>
         <div class="col-md-3">
           <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <img src="/static/Arnes%20Ergonomico.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Arneses">
+            <img src="/static/Arnes Ergonomico.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Arneses">
             <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Arneses Ergonómicos</small></div>
           </div>
         </div>
         <div class="col-md-3">
           <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <img src="/static/Logo%20dorado.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
+            <img src="/static/Logo dorado.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
             <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Accesorios de Lujo</small></div>
           </div>
         </div>
@@ -1204,7 +1219,7 @@ HOME_PAGE = """
 
   <footer class="bg-dark text-white py-4 mt-5 text-center">
     <div class="container">
-      <img src="/static/Logo%20blanco%20y%20negro.jpg" alt="LuxPet Logo Blanco y Negro" style="height: 40px; width: auto;" class="mb-2 rounded">
+      <img src="/static/Logo blanco y negro.jpg" alt="LuxPet Logo Blanco y Negro" style="height: 40px; width: auto;" class="mb-2 rounded">
       <p class="mb-1 brand-font fs-4">LuxPet Boutique</p>
       <p class="text-muted small mb-0">© 2026 LuxPet. Todos los derechos reservados.</p>
     </div>
@@ -1508,7 +1523,7 @@ async function loadCatalog() {
     const cardsContainer = $('clientCatalogCards');
     if (cardsContainer && data.accessory_types) {
       cardsContainer.innerHTML = data.accessory_types.map(acc => {
-        const img = productImages[acc] || '/static/Logo%20principal.jpg';
+        const img = productImages[acc] || '/static/Logo principal.jpg';
         const baseP = prices[acc] || 45000;
         const disc = discounts[acc] || 0;
         const finalP = getFinalProductPrice(acc);
