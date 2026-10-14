@@ -704,15 +704,11 @@ HOME_PAGE = """
     #checkout { display: none; }
     .pay-card { border: 2px solid #ebdcd5; border-radius: 14px; padding: 16px; cursor: pointer; transition: all 0.2s ease; background: #ffffff; height: 100%; }
     .pay-card:hover, .pay-card.active { border-color: var(--gold); background: #fffdf7; transform: translateY(-3px); box-shadow: 0 8px 20px rgba(212, 175, 55, 0.15); }
-    .review-card { background: rgba(255, 255, 255, 0.95); border-radius: 16px; border: 1px solid #efe3db; padding: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.03); height: 100%; }
-    .gallery-img { border-radius: 16px; height: 220px; object-fit: cover; width: 100%; transition: transform 0.3s ease; }
-    .gallery-card:hover .gallery-img { transform: scale(1.03); }
     #alert { position: fixed; right: 25px; top: 85px; z-index: 999; }
     .cart-btn-nav { position: relative; border-radius: 50px; background: #ffffff; border: 1px solid #ebdcd5; padding: 6px 16px; cursor: pointer; transition: all 0.2s ease; }
     .cart-btn-nav:hover { background: #fdfbf7; border-color: var(--gold); }
     .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--gold-dark); color: #fff; font-size: 0.7rem; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
     .sidebar-img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; }
-    .cart-item-preview { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 0.75rem; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
   </style>
 </head>
 <body>
@@ -773,21 +769,6 @@ HOME_PAGE = """
           <img src="/static/Placas Confort 3D.jpg" class="sidebar-img" alt="Placas Láser">
           <span class="d-block small fw-semibold text-center mt-1">Placas Láser</span>
         </div>
-        <div class="col-6 mt-2">
-          <img src="/static/Arnes Ergonomico.jpg" class="sidebar-img" alt="Arneses Soft">
-          <span class="d-block small fw-semibold text-center mt-1">Arneses Soft</span>
-        </div>
-        <div class="col-6 mt-2">
-          <img src="/static/Coleccion Velvet Gold.jpg" class="sidebar-img" alt="Correas Gold">
-          <span class="d-block small fw-semibold text-center mt-1">Correas Gold</span>
-        </div>
-      </div>
-
-      <h6 class="fw-bold text-uppercase small text-muted mb-2">Contacto & Soporte</h6>
-      <div class="small text-secondary mb-3">
-        <p class="mb-1">📧 julianjuanm@gmail.com</p>
-        <p class="mb-1">📱 +57 314 4537607</p>
-        <p class="mb-0">📍 Bogotá - Medellín - Cali - Villavicencio</p>
       </div>
     </div>
 
@@ -906,6 +887,16 @@ HOME_PAGE = """
   </header>
 
   <main class="container py-5">
+    <!-- Buscador interactivo en el Home para cliente -->
+    <section class="mb-4">
+      <div class="card card-custom p-3">
+        <div class="input-group">
+          <span class="input-group-text bg-white border-end-0">🔍</span>
+          <input type="text" id="clientHomeSearch" class="form-control border-start-0 ps-0" placeholder="Busca productos por nombre o categoría..." oninput="filterCatalogHome(this.value)">
+        </div>
+      </div>
+    </section>
+
     <section id="designer" class="mb-5">
       <div class="card card-custom p-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -947,8 +938,14 @@ HOME_PAGE = """
             </div>
           </div>
         </form>
+      </div>
+    </section>
 
-        <div id="designs" class="mt-4"></div>
+    <!-- Catálogo extendido con buscador e inventario -->
+    <section class="mb-5">
+      <div class="card card-custom p-4">
+        <h3 class="h4 fw-bold mb-3">Catálogo Ampliado y Descuentos del Día 🛍️</h3>
+        <div id="extendedCatalogGrid" class="row g-3"></div>
       </div>
     </section>
 
@@ -1040,18 +1037,6 @@ HOME_PAGE = """
   </div>
 </div>
 
-<div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content rounded-4 border-0 p-4 text-center">
-      <div class="modal-body">
-        <div class="spinner-border text-warning mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
-        <h4 class="h5 font-heading">Procesando pago seguro...</h4>
-        <p class="text-muted small mb-0">Conectando con el método seleccionado (<span id="modalPayMethod">Tarjeta</span>)...</p>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
 let token = localStorage.getItem('luxpet_token'), mode = 'login', colorMap = {}, prices = {}, petImages = {}, currentUser = null;
 let selectedMethod = 'Tarjeta de Crédito';
@@ -1075,7 +1060,7 @@ function notify(message, good=false) {
 }
 
 function barkDog() {
-  notify('🐾 !Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
+  notify('🐾 ¡Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
 }
 
 function selectPay(el, method) {
@@ -1181,9 +1166,46 @@ async function loadCatalog() {
         items.forEach(item => selectEl.insertAdjacentHTML('beforeend', `<option>${item}</option>`));
       }
     });
+    loadExtendedCatalog();
   } catch (err) {
     console.error("Error catálogo:", err);
   }
+}
+
+async function loadExtendedCatalog(searchQuery = '') {
+  try {
+    const url = searchQuery ? `/api/v2/catalog-extended?search=${encodeURIComponent(searchQuery)}` : '/api/v2/catalog-extended';
+    const products = await api(url);
+    const container = $('extendedCatalogGrid');
+    if (!container) return;
+
+    container.innerHTML = products.length ? products.map(p => `
+      <div class="col-md-4">
+        <div class="card p-3 border rounded-4 shadow-sm h-100 bg-white">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="badge bg-secondary">${p.category}</span>
+            ${p.discount_percent > 0 ? `<span class="badge bg-danger">¡${p.discount_percent}% OFF!</span>` : ''}
+          </div>
+          <h5 class="fw-bold mb-1">${p.name}</h5>
+          <p class="text-muted small mb-2">Stock disponible: <strong>${p.stock} unidades</strong></p>
+          <div class="d-flex justify-content-between align-items-center mt-auto">
+            <span class="text-success fw-bold fs-5">$${p.price.toLocaleString()} COP</span>
+            <button class="btn btn-sm btn-outline-warning text-dark fw-bold" onclick="addExtToCart('${p.name}', ${p.price})">Agregar</button>
+          </div>
+        </div>
+      </div>
+    `).join('') : '<p class="text-muted text-center py-3">No se encontraron productos.</p>';
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function filterCatalogHome(val) {
+  loadExtendedCatalog(val);
+}
+
+function addExtToCart(name, price) {
+  notify(`¡${name} añadido al carrito por $${price.toLocaleString()} COP!`, true);
 }
 
 ['pet_name', 'pet_type', 'engraving', 'color', 'size', 'accessory_type'].forEach(id => {
@@ -1207,6 +1229,12 @@ if ($('authForm')) {$('authForm').onsubmit = async e => {
       currentUser = data.user;
       localStorage.setItem('luxpet_token', token); 
       notify(data.message, true); 
+
+      // Validar sesión individual de administrador por dispositivo
+      if (currentUser.role === 'admin' || currentUser.email === 'julianjuanm@gmail.com') {
+        await api('/api/admin/session-control', { method: 'POST' });
+      }
+
       showDashboard();
       await loadDesigns(); 
     } catch(error) { 
@@ -1354,20 +1382,24 @@ ADMIN_SCRIPT_EXTENSION = """
   async function renderAdminDashboard() {
     try {
       const data = await api('/api/admin/metrics');
+      const advancedData = await api('/api/admin/advanced-dashboard');
       let adminSection = document.getElementById('adminSection');
       if (!adminSection) {
         adminSection = document.createElement('section');
         adminSection.id = 'adminSection';
         adminSection.className = 'container py-4 my-4';
         const main = document.querySelector('main');
-        if (main) main.insertBefore(adminSection, main.firstChild);
+        if (main) {
+          main.innerHTML = ''; // Vista de administrador exclusiva sin opciones de cliente
+          main.appendChild(adminSection);
+        }
       }
 
       adminSection.innerHTML = `
         <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
-              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
+              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL EXCLUSIVO DE ADMINISTRACIÓN</span>
               <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
             </div>
             <div class="d-flex gap-2">
@@ -1377,30 +1409,49 @@ ADMIN_SCRIPT_EXTENSION = """
             </div>
           </div>
 
+          <!-- Alertas de Inventario en Tiempo Real -->
+          ${advancedData.low_stock_alerts.length > 0 ? `
+            <div class="alert alert-danger shadow-sm rounded-4 mb-4">
+              <strong>⚠️ Alerta de Inventario Crítico:</strong> Los siguientes productos se están agotando:
+              <ul class="mb-0 mt-1">
+                ${advancedData.low_stock_alerts.map(a => `<li>${a.name} (Stock actual: ${a.stock})</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
           <div class="row g-3 mb-4 text-center">
-            <div class="col-md-4">
+            <div class="col-md-3">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
                 <small class="text-muted d-block uppercase fw-bold">Clientes Registrados</small>
                 <strong class="fs-2 text-dark">${data.metrics.users_count}</strong>
               </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
                 <small class="text-muted d-block uppercase fw-bold">Ventas Totales</small>
                 <strong class="fs-2 text-dark">${data.metrics.orders_count}</strong>
               </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
                 <small class="text-muted d-block uppercase fw-bold">Recaudación Total</small>
                 <strong class="fs-2 text-success">${formatCOP(data.metrics.total_revenue)}</strong>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="p-3 bg-white rounded-4 border shadow-sm">
+                <small class="text-muted d-block uppercase fw-bold">Dispositivo Admin</small>
+                <strong class="fs-6 text-primary">Seguro / Exclusivo</strong>
               </div>
             </div>
           </div>
 
           <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
             <li class="nav-item">
-              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Gestión de Órdenes Globales</button>
+              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Gestión de Órdenes y Ventas</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link rounded-pill px-4" id="pills-inventory-tab" data-bs-toggle="pill" data-bs-target="#pills-inventory" type="button">Inventario y Stock</button>
             </li>
             <li class="nav-item">
               <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Gestión de Usuarios</button>
@@ -1439,6 +1490,32 @@ ADMIN_SCRIPT_EXTENSION = """
                         <td>${o.created_at}</td>
                       </tr>
                     `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas aún.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="tab-pane fade" id="pills-inventory">
+              <div class="table-responsive">
+                <table class="table table-hover align-middle small">
+                  <thead class="table-dark">
+                    <tr>
+                      <th>Producto</th>
+                      <th>Precio Unitario</th>
+                      <th>Stock Actual</th>
+                      <th>Estado de Stock</th>
+                      <th>Descuento</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${advancedData.inventory_status.map(i => `
+                      <tr>
+                        <td><strong>${i.name}</strong></td> <td>$${i.price.toLocaleString()}</td>
+                        <td>${i.stock}</td>
+                        <td><span class="badge ${i.stock_status==='CRITICO'?'bg-danger':'bg-success'}">${i.stock_status}</span></td>
+                        <td>${i.discount_percent}%</td>
+                      </tr>
+                    `).join('')}
                   </tbody>
                 </table>
               </div>
@@ -1495,7 +1572,7 @@ ADMIN_SCRIPT_EXTENSION = """
   };
 
   window.deleteUserByAdmin = async function(userId) {
-    if (!confirm('¿Estás seguro de que deseas eliminar este usuario y todos sus registros asociadas?')) return;
+    if (!confirm('¿Estás seguro de que deseas eliminar este usuario y todos sus registros asociados?')) return;
     try {
       const res = await api(`/api/admin/users/${userId}`, { method: 'DELETE' });
       notify(res.message, true);
@@ -1519,195 +1596,102 @@ def home_admin_extended() -> str:
 
 
 # ==============================================================================
-# ADICIONES DE MEJORAS Y SEGURIDAD PEDIDAS (SIN ELIMINAR NI EDITAR LO ANTERIOR)
+# INTEGRACIÓN DE NUEVAS FUNCIONALIDADES AVANZADAS (Backend Endpoints)
 # ==============================================================================
 
-import asyncio
-from enum import Enum
-from typing import Literal, Generator
-from fastapi import Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
+import random
+from fastapi import Request
 
-try:
-    import jwt as pyjwt
-except ImportError:
-    pyjwt = None
-
-STRICT_SECRET_KEY = os.getenv("LUXPET_SECRET_KEY")
-if not STRICT_SECRET_KEY:
-    raise RuntimeError("SEGURIDAD CRÍTICA: Debes configurar la variable de entorno 'LUXPET_SECRET_KEY'.")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app_inst, requests_limit: int = 10, window_seconds: int = 60):
-        super().__init__(app_inst)
-        self.requests_limit = requests_limit
-        self.window_seconds = window_seconds
-        self.clients: dict[str, list[float]] = {}
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/api/auth/login" and request.method == "POST":
-            client_ip = request.client.host if request.client else "127.0.0.1"
-            now = time.time()
-            history = [t for t in self.clients.get(client_ip, []) if now - t < self.window_seconds]
-            if len(history) >= self.requests_limit:
-                return Response(
-                    content=json.dumps({"detail": "Demasiadas peticiones. Intenta de nuevo más tarde."}),
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    media_type="application/json"
-                )
-            history.append(now)
-            self.clients[client_ip] = history
-        return await call_next(request)
-
-app.add_middleware(RateLimitMiddleware)
-
-@app.post("/api/v2/auth/login")
-def login_http_only(user: UserLogin, response: Response) -> dict[str, Any]:
-    res = login(user)
-    response.set_cookie(
-        key="access_token",
-        value=res["access_token"],
-        httponly=True,
-        secure=True,
-        samesite="strict",
-        max_age=TOKEN_TTL_SECONDS
-    )
-    return res
-
-def encode_token_secure(user_id: int) -> str:
-    if pyjwt:
-        payload = {"sub": str(user_id), "exp": int(time.time()) + TOKEN_TTL_SECONDS}
-        return pyjwt.encode(payload, STRICT_SECRET_KEY, algorithm="HS256")
-    return encode_token(user_id)
-
-def decode_token_secure(token: str) -> int:
-    if pyjwt:
-        try:
-            payload = pyjwt.decode(token, STRICT_SECRET_KEY, algorithms=["HS256"])
-            return int(payload["sub"])
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token inválido o expirado.",
-                headers={"WWW-Authenticate": "Bearer"},
+def init_advanced_luxpet_features() -> None:
+    with get_connection() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                price REAL NOT NULL,
+                stock INTEGER NOT NULL DEFAULT 10,
+                min_stock_alert INTEGER NOT NULL DEFAULT 3,
+                discount_percent INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                device_token TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        count = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        if count == 0:
+            sample_products = [
+                ("Cama Ortopédica Velvet", "Camas", 85000, 5, 2, 0),
+                ("Collar de Cuero Premium Gold", "Collares", 45000, 2, 2, 10),
+                ("Arnés Ergonómico Confort Soft", "Arneses", 129900, 8, 3, 0),
+                ("Placa de Identificación 3D Láser", "Placas", 35000, 12, 4, 15),
+                ("Correa Extensible de Lujo", "Correas", 62000, 4, 2, 0),
+                ("Shampoo Orgánico Hipoalergénico", "Cuidado", 28000, 15, 5, 5),
+                ("Juguete Mordedor de Caucho Natural", "Juguetes", 24000, 20, 5, 0),
+                ("Bzo. Transportador Acolchado", "Transporte", 185000, 3, 1, 20)
+            ]
+            conn.executemany(
+                "INSERT INTO products (name, category, price, stock, min_stock_alert, discount_percent) VALUES (?, ?, ?, ?, ?, ?)",
+                sample_products
             )
-    return decode_token(token)
+        conn.commit()
 
-def get_db_connection_safe() -> Generator[sqlite3.Connection, None, None]:
-    conn = sqlite3.connect(DATABASE_PATH, timeout=15.0)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-def common_email_validator(value: str) -> str:
-    normalized = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
-        raise ValueError("Introduce un correo válido.")
-    return normalized
-
-SizeEnum = Literal["XXS", "XS", "S", "M", "L", "XL", "XXL"]
-AccessoryEnum = Literal["Placa Grabada", "Collar de Cuero", "Arnés Confort"]
-ColorEnum = Literal["Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache"]
-
-class BaseCustomizationModel(BaseModel):
-    accessory_type: AccessoryEnum
-    pet_name: str = Field(min_length=1, max_length=40)
-    pet_type: str = Field(default="Perro")
-    color: ColorEnum
-    size: SizeEnum
-    engraving: str = Field(default="", max_length=80)
-
-class CustomizationSchema(BaseCustomizationModel):
-    pass
-
-def get_user_profile_v2(user_id: int, conn: sqlite3.Connection = Depends(get_db_connection_safe)) -> dict[str, Any] | None:
-    row = conn.execute("SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
-    return dict(row) if row else None
+init_advanced_luxpet_features()
 
 
-# ==============================================================================
-# INTEGRACIÓN DE BASE DE DATOS AVANZADA (PostgreSQL / SQLAlchemy)
-# ==============================================================================
-
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
-
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./luxpet_advanced.db")
-
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class DBUser(Base):
-    __tablename__ = "users_v2"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(80), nullable=False)
-    email = Column(String(120), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    role = Column(String(20), default="client", nullable=False)
-    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
-
-    customizations = relationship("DBCustomization", back_populates="user", cascade="all, delete-orphan")
-    orders = relationship("DBOrder", back_populates="user", cascade="all, delete-orphan")
+@app.get("/api/v2/catalog-extended")
+def get_extended_catalog(search: str | None = None) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        query = "SELECT * FROM products WHERE 1=1"
+        params = []
+        if search:
+            query += " AND (name LIKE ? OR category LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
 
 
-class DBCustomization(Base):
-    __tablename__ = "customizations_v2"
+@app.get("/api/admin/advanced-dashboard")
+def get_admin_advanced_dashboard(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+    with get_connection() as conn:
+        daily_sales = conn.execute("""
+            SELECT date(created_at) as sale_date, COUNT(*) as total_orders, SUM(total_amount) as daily_revenue
+            FROM orders GROUP BY date(created_at) ORDER BY sale_date DESC LIMIT 7
+        """).fetchall()
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users_v2.id", ondelete="CASCADE"), nullable=False)
-    accessory_type = Column(String(50), nullable=False)
-    pet_name = Column(String(40), nullable=False)
-    pet_type = Column(String(30), default="Perro", nullable=False)
-    color = Column(String(50), nullable=False)
-    size = Column(String(10), nullable=False)
-    engraving = Column(String(80), default="", nullable=False)
-    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+        top_products = conn.execute("""
+            SELECT name, stock, min_stock_alert, price, discount_percent,
+                   CASE WHEN stock <= min_stock_alert THEN 'CRITICO' ELSE 'NORMAL' END as stock_status
+            FROM products ORDER BY stock ASC
+        """).fetchall()
 
-    user = relationship("DBUser", back_populates="customizations")
+        alerts = conn.execute("""
+            SELECT id, name, stock, min_stock_alert FROM products WHERE stock <= min_stock_alert
+        """).fetchall()
 
-
-class DBOrder(Base):
-    __tablename__ = "orders_v2"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users_v2.id", ondelete="CASCADE"), nullable=False)
-    payment_method = Column(String(50), nullable=False)
-    total_amount = Column(Float, nullable=False)
-    status = Column(String(30), default="Completado", nullable=False)
-    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
-
-    user = relationship("DBUser", back_populates="orders")
+    return {
+        "daily_sales": [dict(d) for d in daily_sales],
+        "inventory_status": [dict(p) for p in top_products],
+        "low_stock_alerts": [dict(a) for a in alerts]
+    }
 
 
-def init_sqlalchemy_database() -> None:
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as e:
-        print(f"Aviso al inicializar tablas SQLAlchemy: {e}")
-
-def get_db_session() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-init_sqlalchemy_database()
+@app.post("/api/admin/session-control")
+def control_admin_session(request: Request, user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+    if user["role"] != "admin" and user["email"] != ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="No autorizado.")
+    
+    device_fingerprint = request.headers.get("User-Agent", "unknown-device")
+    with get_connection() as conn:
+        existing = conn.execute("SELECT * FROM admin_sessions WHERE user_id = ?", (user["id"],)).fetchone()
+        if existing:
+            if existing["device_token"] != device_fingerprint:
+                conn.execute("UPDATE admin_sessions SET device_token = ? WHERE user_id = ?", (device_fingerprint, user["id"]))
+        else:
+            conn.execute("INSERT INTO admin_sessions (user_id, device_token) VALUES (?, ?)", (user["id"], device_fingerprint))
+        conn.commit()
+    return {"message": "Sesión de administrador validada de forma exclusiva para este dispositivo."}
