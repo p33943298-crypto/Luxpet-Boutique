@@ -49,26 +49,35 @@ COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Lux
 
 PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Loro", "Cobaya", "Capibara", "Erizo")
 
+# Función auxiliar para convertir imágenes locales a Base64 de forma segura y garantizada
+def get_base64_image(filename: str) -> str:
+    file_path = STATIC_DIR / filename
+    if file_path.exists():
+        with open(file_path, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("utf-8")
+            return f"data:image/jpeg;base64,{encoded}"
+    return "/static/Logo principal.jpg"
+
 PET_IMAGES = {
-    "Perro": "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80",
-    "Gato": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=300&q=80",
-    "Conejo": "https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=300&q=80",
-    "Hámster": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS1p9zHrS4vacaPMMXPwJTaFIwOfxXCfEIwRl26WTm4qg&s=10",
-    "Hurón": "https://www.clinicaveterinariazarpa.com/wp-content/uploads/2019/04/huron-cuidados-basicos-veterinario.jpg",
-    "Loro": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQebDUS5U76EagNt8m7AP159B41i1YRnHOheNSrxtqvZOhmCEnwS8eU2JE&s=10",
-    "Cobaya": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRdHHZ9xrQfd2w5Cft2Ev_BPC21t7hjzK-9iyvhce76sQ&s=10",
-    "Capibara": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE32LihXG7e2E31yQqDiEsEnXt_AzmfG0qDF-gchBubA&s=10",
-    "Erizo": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSbQdAjoQMnTfbUa--3D-JcRG531VbWeD-VIRaWLt_97XEq9SJdY7Noks-Y&s=10"
+    "Perro": get_base64_image("perro.jpg"),
+    "Gato": get_base64_image("gato.jpg"),
+    "Conejo": get_base64_image("conejo.jpg"),
+    "Hámster": get_base64_image("Hamster.jpg"),
+    "Hurón": get_base64_image("huron.jpg"),
+    "Loro": get_base64_image("loro.jpg"),
+    "Cobaya": get_base64_image("cobaya.jpg"),
+    "Capibara": get_base64_image("capibara.jpg"),
+    "Erizo": get_base64_image("erizo.jpg")
 }
 
 PRODUCT_IMAGES = {
-    "Placa Grabada": "/static/Placas%20Confort%203D.jpg",
-    "Collar de Cuero": "/static/Coleccion%20Velvet%20Gold.jpg",
-    "Arnés Confort": "/static/Arnes%20Ergonomico.jpg",
-    "Correa Elegance 3m": "/static/Coleccion%20Velvet%20Gold.jpg",
-    "Bandana de Seda": "/static/Bandana%20de%20Seda.jpg",
-    "Moño de Gala": "/static/Mo%C3%B1o%20de%20Gala.jpg",
-    "Cama Oropel": "/static/Cama%20Oropel.jpg"
+    "Placa Grabada": get_base64_image("Placas Confort 3D.jpg"),
+    "Collar de Cuero": get_base64_image("Coleccion Velvet Gold.jpg"),
+    "Arnés Confort": get_base64_image("Arnes Ergonomico.jpg"),
+    "Correa Elegance 3m": get_base64_image("Coleccion Velvet Gold.jpg"),
+    "Bandana de Seda": get_base64_image("Bandana de Seda.jpg"),
+    "Moño de Gala": get_base64_image("Moño de Gala.jpg"),
+    "Cama Oropel": get_base64_image("Cama Oropel.jpg")
 }
 
 COLOR_MAP = {
