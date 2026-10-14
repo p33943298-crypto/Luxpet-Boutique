@@ -63,13 +63,13 @@ PET_IMAGES = {
 
 # Mapeo exacto con los nombres de archivo de tu carpeta static
 PRODUCT_IMAGES = {
-    "Placa Grabada": "/static/Placas%20Confort%203D.jpg",
-    "Collar de Cuero": "/static/Coleccion%20Velvet%20Gold.jpg",
-    "Arnés Confort": "/static/Arnes%20Ergonomico.jpg",
-    "Correa Elegance 3m": "/static/Coleccion%20Velvet%20Gold.jpg",
-    "Bandana%20de%20Seda": "/static/Bandana%20de%20Seda.jpg",
-    "Moño de Gala": "/static/Mo%C3%B1o%20de%20Gala.jpg",
-    "Cama Oropel": "/static/Cama%20Oropel.jpg"
+    "Placa Grabada": "/static/Placas Confort 3D.jpg",
+    "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
+    "Arnés Confort": "/static/Arnes Ergonomico.jpg",
+    "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
+    "Bandana de Seda": "/static/Bandana de Seda.jpg",
+    "Moño de Gala": "/static/Moño de Gala.jpg",
+    "Cama Oropel": "/static/Cama Oropel.jpg"
 }
 
 COLOR_MAP = {
@@ -1506,10 +1506,16 @@ async function loadCatalog() {
       }
     });
 
-    const cardsContainer = $('clientCatalogCards');
+  const cardsContainer = $('clientCatalogCards');
     if (cardsContainer && data.accessory_types) {
       cardsContainer.innerHTML = data.accessory_types.map(acc => {
-        const img = productImages[acc] || '/static/Logo principal.jpg';
+        // Validación directa por nombre si la ruta del servidor presenta conflictos
+        let img = productImages[acc];
+        if (acc === 'Bandana de Seda') img = '/static/Bandana de Seda.jpg';
+        if (acc === 'Moño de Gala') img = '/static/Moño de Gala.jpg';
+        if (acc === 'Cama Oropel') img = '/static/Cama Oropel.jpg';
+        if (!img) img = '/static/Logo principal.jpg';
+
         const baseP = prices[acc] || 45000;
         const disc = discounts[acc] || 0;
         const finalP = getFinalProductPrice(acc);
@@ -1535,10 +1541,6 @@ async function loadCatalog() {
         `;
       }).join('');
     }
-  } catch (err) {
-    console.error("Error catálogo:", err);
-  }
-}
 
 function selectAccessoryFromCatalog(accName) {
   const sel = $('accessory_type');
