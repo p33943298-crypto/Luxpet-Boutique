@@ -31,7 +31,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.5.0",
+    version="4.6.0",
 )
 
 if not STATIC_DIR.exists():
@@ -157,6 +157,10 @@ class InventoryUpdate(BaseModel):
     stock: int
 
 
+class BroadcastMessage(BaseModel):
+    message: str
+
+
 def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
@@ -202,12 +206,22 @@ def initialize_database() -> None:
                 stock INTEGER NOT NULL DEFAULT 25,
                 min_threshold INTEGER NOT NULL DEFAULT 5
             );
+            CREATE TABLE IF NOT EXISTS store_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
         for prod in ACCESSORY_TYPES:
             exists = connection.execute("SELECT id FROM inventory WHERE product_name = ?", (prod,)).fetchone()
             if not exists:
                 connection.execute("INSERT INTO inventory (product_name, stock, min_threshold) VALUES (?, 30, 5)", (prod,))
+        
+        # Configuración por defecto de la tienda del dueño
+        settings = connection.execute("SELECT key FROM store_settings WHERE key = 'store_status'").fetchone()
+        if not settings:
+            connection.execute("INSERT INTO store_settings (key, value) VALUES ('store_status', 'open')")
+            connection.execute("INSERT INTO store_settings (key, value) VALUES ('announcement', '¡Bienvenidos a LuxPet Boutique Pro!')")
         connection.commit()
 
 
@@ -312,6 +326,9 @@ def catalog() -> dict[str, Any]:
     with get_connection() as connection:
         inv_rows = connection.execute("SELECT product_name, stock, min_threshold FROM inventory").fetchall()
         inventory_data = {r["product_name"]: {"stock": r["stock"], "min_threshold": r["min_threshold"]} for r in inv_rows}
+        
+        status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+        store_status = status_row["value"] if status_row else "open"
 
     return {
         "accessory_types": ACCESSORY_TYPES, 
@@ -323,7 +340,8 @@ def catalog() -> dict[str, Any]:
         "color_map": COLOR_MAP,
         "prices": PRICES,
         "discounts": discounts,
-        "inventory": inventory_data
+        "inventory": inventory_data,
+        "store_status": store_status
     }
 
 
@@ -402,6 +420,10 @@ def create_customization(
         raise HTTPException(status_code=422, detail="Talla no disponible.")
     
     with get_connection() as connection:
+        status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+        if status_row and status_row["value"] == "closed":
+            raise HTTPException(status_code=403, detail="La tienda se encuentra temporalmente cerrada por mantenimiento del dueño.")
+
         inv = connection.execute("SELECT stock FROM inventory WHERE product_name = ?", (customization.accessory_type,)).fetchone()
         if inv and inv["stock"] <= 0:
             raise HTTPException(status_code=400, detail=f"Lo sentimos, el producto '{customization.accessory_type}' está agotado.")
@@ -531,7 +553,7 @@ def list_orders(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any
 
 
 # ==============================================================================
-# FUNCIONES EXCLUSIVAS PARA ADMINISTRADOR
+# FUNCIONES EXCLUSIVAS PARA EL DUEÑO (ADMINISTRADOR)
 # ==============================================================================
 
 ADMIN_EMAIL = "julianjuanm@gmail.com"
@@ -555,7 +577,7 @@ def init_admin_role_and_account() -> None:
         if not admin_user:
             conn.execute(
                 "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
-                ("Administrador LuxPet", ADMIN_EMAIL, hash_password(ADMIN_PASSWORD))
+                ("Juan Manuel (Dueño Propietario)", ADMIN_EMAIL, hash_password(ADMIN_PASSWORD))
             )
         else:
             conn.execute(
@@ -573,7 +595,7 @@ def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
     if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso restringido para el Administrador Principal."
+            detail="Acceso exclusivo para el Dueño Propietario de LuxPet."
         )
     return user
 
@@ -613,6 +635,9 @@ def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(c
         
         all_users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
         inventory_rows = conn.execute("SELECT * FROM inventory").fetchall()
+        
+        status_row = conn.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+        store_status = status_row["value"] if status_row else "open"
 
     return {
         "metrics": {
@@ -624,8 +649,19 @@ def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(c
         "top_products": [dict(r) for r in top_products],
         "inventory": [dict(r) for r in inventory_rows],
         "orders": [dict(r) for r in recent_orders],
-        "users": [dict(u) for u in all_users]
+        "users": [dict(u) for u in all_users],
+        "store_status": store_status
     }
+
+
+@app.put("/api/admin/store/toggle")
+def toggle_store_status(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+    with get_connection() as conn:
+        current = conn.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+        new_status = "closed" if current and current["value"] == "open" else "open"
+        conn.execute("UPDATE store_settings SET value = ? WHERE key = 'store_status'", (new_status,))
+        conn.commit()
+    return {"message": f"Estado de la tienda actualizado a: {'Abierta' if new_status == 'open' else 'Cerrada'}", "status": new_status}
 
 
 @app.put("/api/admin/inventory")
@@ -665,7 +701,7 @@ def delete_user_by_admin(
     admin: sqlite3.Row = Depends(current_admin),
 ) -> dict[str, Any]:
     if user_id == admin["id"]:
-        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta de Administrador.")
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta de Dueño.")
     
     with get_connection() as conn:
         conn.execute("DELETE FROM customizations WHERE user_id = ?", (user_id,))
@@ -826,6 +862,14 @@ HOME_PAGE = """
     .cart-btn-nav:hover { background: #fdfbf7; border-color: var(--gold); }
     .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--gold-dark); color: #fff; font-size: 0.7rem; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
     .catalog-grid-img { width: 100%; height: 140px; object-fit: cover; border-radius: 12px; }
+    
+    /* Autocompletado buscador */
+    .search-autocomplete-box {
+      position: absolute; top: 100%; left: 0; right: 0; background: #ffffff; border: 1px solid #ebdcd5;
+      border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); z-index: 1050; max-height: 250px; overflow-y: auto; display: none;
+    }
+    .search-suggestion-item { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f2ece9; font-size: 0.9rem; }
+    .search-suggestion-item:hover { background: #fdfbf7; color: var(--gold-dark); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -843,9 +887,10 @@ HOME_PAGE = """
       </a>
     </div>
 
-    <!-- Buscador interactivo en el Home para Clientes -->
-    <div class="d-none d-md-flex align-items-center flex-grow-1 mx-4" id="clientSearchWrapper">
-      <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar accesorios, placas, camas, arneses..." oninput="filterCatalogHome(this.value)">
+    <!-- Barra de Búsqueda Interactiva con Autocompletado Inteligente -->
+    <div class="d-none d-md-flex align-items-center flex-grow-1 mx-4 position-relative" id="clientSearchWrapper">
+      <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar placas, collares, arneses, camas..." oninput="handleSearchAutocomplete(this.value)">
+      <div id="searchSuggestions" class="search-autocomplete-box"></div>
     </div>
 
     <div class="d-flex align-items-center gap-3" id="userNavStatus"></div>
@@ -874,33 +919,22 @@ HOME_PAGE = """
         </div>
       </div>
 
-      <!-- Nota: Se removió el botón del carrito del menú desplegable como se solicitó -->
-
-      <h6 class="fw-bold text-uppercase small text-muted mb-3">Catálogo de Productos & Imágenes</h6>
-      <div class="row g-2 mb-4" id="sidebarCatalogImages">
+      <h6 class="fw-bold text-uppercase small text-muted mb-3">Galería y Estilos</h6>
+      <div class="row g-2 mb-4">
         <div class="col-6 text-center">
-          <img src="/static/Coleccion Velvet Gold.jpg" class="catalog-grid-img" alt="Collar de Cuero">
-          <span class="d-block small fw-semibold mt-1">Collares Luxe</span>
+          <img src="/static/Coleccion Velvet Gold.jpg" class="catalog-grid-img" alt="Collar">
+          <span class="d-block small fw-semibold mt-1">Collares Velvet</span>
         </div>
         <div class="col-6 text-center">
-          <img src="/static/Placas Confort 3D.jpg" class="catalog-grid-img" alt="Placa Grabada">
+          <img src="/static/Placas Confort 3D.jpg" class="catalog-grid-img" alt="Placa">
           <span class="d-block small fw-semibold mt-1">Placas 3D</span>
-        </div>
-        <div class="col-6 text-center mt-2">
-          <img src="/static/Arnes Ergonomico.jpg" class="catalog-grid-img" alt="Arnés Confort">
-          <span class="d-block small fw-semibold mt-1">Arneses Soft</span>
-        </div>
-        <div class="col-6 text-center mt-2">
-          <img src="/static/Logo dorado.jpg" class="catalog-grid-img" alt="Moño de Gala">
-          <span class="d-block small fw-semibold mt-1">Moños & Bandanas</span>
         </div>
       </div>
 
-      <h6 class="fw-bold text-uppercase small text-muted mb-2">Contacto & Soporte</h6>
+      <h6 class="fw-bold text-uppercase small text-muted mb-2">Soporte del Propietario</h6>
       <div class="small text-secondary mb-3">
-        <p class="mb-1">📧 julianjuanm@gmail.com</p>
+        <p class="mb-1">📧 julianjuanm@gmail.com (Dueño)</p>
         <p class="mb-1">📱 +57 314 4537607</p>
-        <p class="mb-0">📍 Bogotá - Medellín - Cali - Villavicencio</p>
       </div>
     </div>
 
@@ -957,6 +991,42 @@ HOME_PAGE = """
 
 <div id="mainContent" class="d-none">
   
+  <!-- Conjunto de imágenes de presentación y banner destacado antes del hero principal -->
+  <section class="py-4 bg-white border-bottom">
+    <div class="container">
+      <div class="text-center mb-4">
+        <span class="badge bg-warning text-dark px-3 py-1 rounded-pill fw-bold text-uppercase">Nuestra Colección de Alta Costura y Confort</span>
+        <h2 class="h3 brand-font fw-bold mt-2">Diseños únicos confeccionados para consentir a tu mascota</h2>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-3">
+          <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <img src="/static/Coleccion Velvet Gold.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Collar">
+            <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Collares Velvet Gold</small></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <img src="/static/Placas Confort 3D.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Placas">
+            <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Placas Grabadas 3D</small></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <img src="/static/Arnes Ergonomico.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Arneses">
+            <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Arneses Ergonómicos</small></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <img src="/static/Logo dorado.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
+            <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Accesorios de Lujo</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <header class="hero">
     <div class="container">
       <div class="row align-items-center g-4">
@@ -1020,7 +1090,6 @@ HOME_PAGE = """
 
   <main class="container py-5">
     
-    <!-- Sección de Catálogo Visual con Imágenes -->
     <section class="mb-5">
       <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
@@ -1028,9 +1097,7 @@ HOME_PAGE = """
           <p class="text-muted small mb-0">Nuestros productos estelares disponibles para personalizar.</p>
         </div>
       </div>
-      <div class="row g-4" id="clientCatalogCards">
-        <!-- Rellenado dinámicamente por JS -->
-      </div>
+      <div class="row g-4" id="clientCatalogCards"></div>
     </section>
 
     <section id="designer" class="mb-5">
@@ -1086,7 +1153,6 @@ HOME_PAGE = """
           <p class="text-muted small">Aplica cupones de descuento y selecciona tu método de pago preferido.</p>
         </div>
 
-        <!-- Sección de Cupón -->
         <div class="row justify-content-center mb-4">
           <div class="col-md-6">
             <div class="input-group">
@@ -1138,7 +1204,6 @@ HOME_PAGE = """
   </footer>
 </div>
 
-<!-- Modal Carrito -->
 <div class="modal fade" id="cartModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content rounded-4 border-0 p-3">
@@ -1163,7 +1228,6 @@ HOME_PAGE = """
   </div>
 </div>
 
-<!-- Modal Historial de Compras del Cliente -->
 <div class="modal fade" id="clientHistoryModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content rounded-4 border-0 p-4">
@@ -1347,10 +1411,48 @@ function updatePreview() {
   if (color && colorMap[color] && $('prevStrap'))$('prevStrap').style.backgroundColor = colorMap[color];
 }
 
+// Búsqueda interactiva con autocompletado en tiempo real
+function handleSearchAutocomplete(query) {
+  const q = query.toLowerCase().trim();
+  const box = $('searchSuggestions');
+  if (!box) return;
+
+  if (q.length === 0) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    filterCatalogHome('');
+    return;
+  }
+
+  // Filtrar accesorios coincidentes
+  const allAcc = Object.keys(prices);
+  const matches = allAcc.filter(acc => acc.toLowerCase().includes(q));
+
+  if (matches.length > 0) {
+    box.style.display = 'block';
+    box.innerHTML = matches.map(m => `
+      <div class="search-suggestion-item" onclick="selectSearchSuggestion('${m}')">
+        🔍 <strong>${m}</strong> <span class="text-muted small">(${formatCOP(getFinalProductPrice(m))})</span>
+      </div>
+    `).join('');
+  } else {
+    box.style.display = 'block';
+    box.innerHTML = `<div class="search-suggestion-item text-muted">No se encontraron resultados para "${query}"</div>`;
+  }
+
+  filterCatalogHome(q);
+}
+
+function selectSearchSuggestion(accName) {
+  const input = $('homeSearchInput');
+  if (input) input.value = accName;
+  const box = $('searchSuggestions');
+  if (box) box.style.display = 'none';
+  selectAccessoryFromCatalog(accName);
+}
+
 function filterCatalogHome(query) {
   const q = query.toLowerCase();
-  
-  // Filtrar selector de accesorios
   const selectAcc = $('accessory_type');
   if (selectAcc) {
     const options = selectAcc.options;
@@ -1360,7 +1462,6 @@ function filterCatalogHome(query) {
     }
   }
 
-  // Filtrar tarjetas visuales de catálogo de cliente
   const cardsContainer = $('clientCatalogCards');
   if (cardsContainer) {
     const cards = cardsContainer.getElementsByClassName('client-catalog-item');
@@ -1381,6 +1482,10 @@ async function loadCatalog() {
     productImages = data.product_images || {};
     petImages = data.pet_images || {};
     
+    if (data.store_status === 'closed') {
+      notify('⚠️ Aviso del Dueño: La tienda se encuentra temporalmente en mantenimiento o cerrada.');
+    }
+    
     [['accessory_type', data.accessory_types], ['pet_type', data.pet_types], ['color', data.colors], ['size', data.sizes]].forEach(([id, items]) => {
       const selectEl = $(id);
       if (selectEl && items) {
@@ -1395,7 +1500,6 @@ async function loadCatalog() {
       }
     });
 
-    // Renderizar catálogo con imágenes en la página de cliente
     const cardsContainer = $('clientCatalogCards');
     if (cardsContainer && data.accessory_types) {
       cardsContainer.innerHTML = data.accessory_types.map(acc => {
@@ -1403,7 +1507,6 @@ async function loadCatalog() {
         const baseP = prices[acc] || 45000;
         const disc = discounts[acc] || 0;
         const finalP = getFinalProductPrice(acc);
-        const stockInfo = inventory[acc] ? inventory[acc].stock : 20;
 
         return `
           <div class="col-md-4 client-catalog-item" data-name="${acc}">
@@ -1484,7 +1587,7 @@ function showDashboard() {
     if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
     if ($('userNavStatus')) {$('userNavStatus').innerHTML = `
         <div class="d-flex align-items-center gap-2 border-start ps-3">
-          <span class="small fw-semibold text-danger">👑 Panel Administrador Exclusivo</span>
+          <span class="small fw-semibold text-danger">👑 Panel Exclusivo del Dueño (Juan Manuel)</span>
           <button onclick="logout()" class="btn btn-sm btn-outline-danger rounded-pill ms-2">Salir</button>
         </div>
       `;
@@ -1648,8 +1751,18 @@ ADMIN_SCRIPT_EXTENSION = """
 <script>
 (function() {
   window.refreshAdminDashboard = async function(period = 'all') {
-    notify('Sincronizando registros nuevos e inventario...', true);
+    notify('Sincronizando panel del dueño...', true);
     await renderAdminDashboard(period);
+  };
+
+  window.toggleStoreStatusByOwner = async function() {
+    try {
+      const res = await api('/api/admin/store/toggle', { method: 'PUT' });
+      notify(res.message, true);
+      renderAdminDashboard();
+    } catch(err) {
+      notify(err.message);
+    }
   };
 
   window.renderAdminDashboard = async function(period = 'all') {
@@ -1669,7 +1782,7 @@ ADMIN_SCRIPT_EXTENSION = """
         if (lowStockItems.length > 0) {
           stockAlertsHTML = `
             <div class="alert alert-danger shadow-sm rounded-4 mb-4 p-3 border-0">
-              <h5 class="fw-bold mb-1">⚠️ Alerta Crítica de Inventario / Stock Bajo:</h5>
+              <h5 class="fw-bold mb-1">⚠️ Alerta Crítica de Inventario / Stock Bajo para el Dueño:</h5>
               <p class="small mb-2">Los siguientes productos están por agotarse o llegaron al límite mínimo en la bodega:</p>
               <ul class="mb-0 small">
                 ${lowStockItems.map(i => `<li><strong>${i.product_name}</strong> - Solo quedan <strong>${i.stock} unidades</strong> disponibles (Mínimo: ${i.min_threshold}).</li>`).join('')}
@@ -1679,22 +1792,27 @@ ADMIN_SCRIPT_EXTENSION = """
         }
       }
 
+      const storeIsOpen = data.store_status === 'open';
+
       adminSection.innerHTML = `
         <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
           <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <div>
-              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN EXCLUSIVO</span>
-              <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
+              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL EXCLUSIVO DEL DUEÑO (JUAN MANUEL)</span>
+              <h2 class="h3 fw-bold mt-2">Control Maestro Boutique 👑</h2>
             </div>
-            <div class="d-flex gap-2 flex-wrap">
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+              <button onclick="toggleStoreStatusByOwner()" class="btn ${storeIsOpen ? 'btn-outline-danger' : 'btn-outline-success'} rounded-pill btn-sm fw-bold">
+                ${storeIsOpen ? '🔴 Cerrar Tienda Temporalmente' : '🟢 Abrir Tienda'}
+              </button>
               <select class="form-select form-select-sm" style="width: auto;" onchange="renderAdminDashboard(this.value)">
                 <option value="all" ${period==='all'?'selected':''}>📅 Todo el tiempo</option>
                 <option value="today" ${period==='today'?'selected':''}>📅 Hoy</option>
                 <option value="week" ${period==='week'?'selected':''}>📅 Última semana</option>
                 <option value="month" ${period==='month'?'selected':''}>📅 Último mes</option>
               </select>
-              <button onclick="refreshAdminDashboard('${period}')" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Actualizar</button>
-              <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar CSV</button>
+              <button onclick="refreshAdminDashboard('${period}')" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Sincronizar</button>
+              <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Reporte CSV</button>
             </div>
           </div>
 
@@ -1715,7 +1833,7 @@ ADMIN_SCRIPT_EXTENSION = """
             </div>
             <div class="col-md-4">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase fw-bold">Recaudación Total</small>
+                <small class="text-muted d-block uppercase fw-bold">Recaudación Neta Total</small>
                 <strong class="fs-2 text-success">${formatCOP(data.metrics.total_revenue)}</strong>
               </div>
             </div>
@@ -1870,7 +1988,7 @@ ADMIN_SCRIPT_EXTENSION = """
                         <td><span class="badge ${u.role==='admin'?'bg-danger':'bg-secondary'}">${u.role}</span></td>
                         <td>${u.created_at}</td>
                         <td>
-                          ${u.email !== 'julianjuanm@gmail.com' ? `<button class="btn btn-sm btn-outline-danger border-0" onclick="deleteUserByAdmin(${u.id})">🗑️ Eliminar</button>` : '<span class="text-muted">Propietario</span>'}
+                          ${u.email !== 'julianjuanm@gmail.com' ? `<button class="btn btn-sm btn-outline-danger border-0" onclick="deleteUserByAdmin(${u.id})">🗑️ Eliminar</button>` : '<span class="text-muted">Propietario Principal</span>'}
                         </td>
                       </tr>
                     `).join('')}
