@@ -31,7 +31,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.7.0",
+    version="4.8.0",
 )
 
 if not STATIC_DIR.exists():
@@ -379,7 +379,6 @@ def login(user: UserLogin) -> dict[str, Any]:
         if stored_user is None or not verify_password(user.password, stored_user["password_hash"]):
             raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
         
-        # Bloquear acceso a clientes si la tienda está cerrada por el dueño (excepto el dueño)
         if stored_user["email"] != ADMIN_EMAIL and stored_user["role"] != "admin":
             status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
             if status_row and status_row["value"] == "closed":
@@ -896,7 +895,8 @@ HOME_PAGE = """
       </a>
     </div>
 
-    <div class="d-none d-md-flex align-items-center flex-grow-1 mx-4 position-relative" id="clientSearchWrapper">
+    <!-- Barra de búsqueda oculta por defecto en la vista de Login/Registro -->
+    <div class="d-none align-items-center flex-grow-1 mx-4 position-relative" id="clientSearchWrapper">
       <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar placas, collares, arneses, camas..." oninput="handleSearchAutocomplete(this.value)">
       <div id="searchSuggestions" class="search-autocomplete-box"></div>
     </div>
@@ -1586,6 +1586,11 @@ function logout() {
 
 function showDashboard() {
   if ($('loginScreen'))$('loginScreen').classList.add('d-none');
+  
+  // Mostrar la barra de búsqueda ahora que el usuario inició sesión
+  if ($('clientSearchWrapper')) {
+    $('clientSearchWrapper').classList.remove('d-none');$('clientSearchWrapper').classList.add('d-md-flex');
+  }
   
   if (currentUser && (currentUser.email === 'julianjuanm@gmail.com' || currentUser.role === 'admin')) {
     if ($('mainContent'))$('mainContent').classList.add('d-none');
