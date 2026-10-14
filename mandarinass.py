@@ -31,7 +31,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.6.0",
+    version="4.7.0",
 )
 
 if not STATIC_DIR.exists():
@@ -157,10 +157,6 @@ class InventoryUpdate(BaseModel):
     stock: int
 
 
-class BroadcastMessage(BaseModel):
-    message: str
-
-
 def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
@@ -217,11 +213,9 @@ def initialize_database() -> None:
             if not exists:
                 connection.execute("INSERT INTO inventory (product_name, stock, min_threshold) VALUES (?, 30, 5)", (prod,))
         
-        # Configuración por defecto de la tienda del dueño
         settings = connection.execute("SELECT key FROM store_settings WHERE key = 'store_status'").fetchone()
         if not settings:
             connection.execute("INSERT INTO store_settings (key, value) VALUES ('store_status', 'open')")
-            connection.execute("INSERT INTO store_settings (key, value) VALUES ('announcement', '¡Bienvenidos a LuxPet Boutique Pro!')")
         connection.commit()
 
 
@@ -385,6 +379,15 @@ def login(user: UserLogin) -> dict[str, Any]:
         if stored_user is None or not verify_password(user.password, stored_user["password_hash"]):
             raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
         
+        # Bloquear acceso a clientes si la tienda está cerrada por el dueño (excepto el dueño)
+        if stored_user["email"] != ADMIN_EMAIL and stored_user["role"] != "admin":
+            status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+            if status_row and status_row["value"] == "closed":
+                raise HTTPException(
+                    status_code=403, 
+                    detail="⚠️ La tienda se encuentra temporalmente cerrada por mantenimiento del dueño. Inténtalo más tarde."
+                )
+
         token = encode_token(stored_user["id"])
         connection.execute(
             "UPDATE users SET active_session_token = ? WHERE id = ?",
@@ -410,6 +413,12 @@ def create_customization(
     customization: AccessoryCustomization,
     user: sqlite3.Row = Depends(current_user),
 ) -> dict[str, Any]:
+    with get_connection() as connection:
+        if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
+            status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+            if status_row and status_row["value"] == "closed":
+                raise HTTPException(status_code=403, detail="La tienda está cerrada por el dueño. No se permiten nuevas compras.")
+
     if customization.accessory_type not in ACCESSORY_TYPES:
         raise HTTPException(status_code=422, detail="Tipo de accesorio no válido.")
     if customization.pet_type not in PET_TYPES:
@@ -420,10 +429,6 @@ def create_customization(
         raise HTTPException(status_code=422, detail="Talla no disponible.")
     
     with get_connection() as connection:
-        status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
-        if status_row and status_row["value"] == "closed":
-            raise HTTPException(status_code=403, detail="La tienda se encuentra temporalmente cerrada por mantenimiento del dueño.")
-
         inv = connection.execute("SELECT stock FROM inventory WHERE product_name = ?", (customization.accessory_type,)).fetchone()
         if inv and inv["stock"] <= 0:
             raise HTTPException(status_code=400, detail=f"Lo sentimos, el producto '{customization.accessory_type}' está agotado.")
@@ -507,6 +512,11 @@ def create_order(
     user: sqlite3.Row = Depends(current_user),
 ) -> dict[str, Any]:
     with get_connection() as connection:
+        if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
+            status_row = connection.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
+            if status_row and status_row["value"] == "closed":
+                raise HTTPException(status_code=403, detail="La tienda se encuentra cerrada por el dueño. No se pueden procesar pagos.")
+
         cart_items = connection.execute(
             "SELECT * FROM customizations WHERE user_id = ?", (user["id"],)
         ).fetchall()
@@ -863,7 +873,6 @@ HOME_PAGE = """
     .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--gold-dark); color: #fff; font-size: 0.7rem; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
     .catalog-grid-img { width: 100%; height: 140px; object-fit: cover; border-radius: 12px; }
     
-    /* Autocompletado buscador */
     .search-autocomplete-box {
       position: absolute; top: 100%; left: 0; right: 0; background: #ffffff; border: 1px solid #ebdcd5;
       border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); z-index: 1050; max-height: 250px; overflow-y: auto; display: none;
@@ -887,7 +896,6 @@ HOME_PAGE = """
       </a>
     </div>
 
-    <!-- Barra de Búsqueda Interactiva con Autocompletado Inteligente -->
     <div class="d-none d-md-flex align-items-center flex-grow-1 mx-4 position-relative" id="clientSearchWrapper">
       <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar placas, collares, arneses, camas..." oninput="handleSearchAutocomplete(this.value)">
       <div id="searchSuggestions" class="search-autocomplete-box"></div>
@@ -991,7 +999,6 @@ HOME_PAGE = """
 
 <div id="mainContent" class="d-none">
   
-  <!-- Conjunto de imágenes de presentación y banner destacado antes del hero principal -->
   <section class="py-4 bg-white border-bottom">
     <div class="container">
       <div class="text-center mb-4">
@@ -1411,7 +1418,6 @@ function updatePreview() {
   if (color && colorMap[color] && $('prevStrap'))$('prevStrap').style.backgroundColor = colorMap[color];
 }
 
-// Búsqueda interactiva con autocompletado en tiempo real
 function handleSearchAutocomplete(query) {
   const q = query.toLowerCase().trim();
   const box = $('searchSuggestions');
@@ -1424,7 +1430,6 @@ function handleSearchAutocomplete(query) {
     return;
   }
 
-  // Filtrar accesorios coincidentes
   const allAcc = Object.keys(prices);
   const matches = allAcc.filter(acc => acc.toLowerCase().includes(q));
 
@@ -1483,7 +1488,7 @@ async function loadCatalog() {
     petImages = data.pet_images || {};
     
     if (data.store_status === 'closed') {
-      notify('⚠️ Aviso del Dueño: La tienda se encuentra temporalmente en mantenimiento o cerrada.');
+      notify('⚠️ Aviso: La tienda se encuentra cerrada temporalmente por el Dueño.');
     }
     
     [['accessory_type', data.accessory_types], ['pet_type', data.pet_types], ['color', data.colors], ['size', data.sizes]].forEach(([id, items]) => {
