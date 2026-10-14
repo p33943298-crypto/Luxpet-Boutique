@@ -31,7 +31,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.9.0",
+    version="4.8.0",
 )
 
 if not STATIC_DIR.exists():
@@ -53,7 +53,7 @@ PET_IMAGES = {
     "Perro": "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80",
     "Gato": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=300&q=80",
     "Conejo": "https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=300&q=80",
-    "Hámster": "/static/Hamster.jpg",
+    "Hámster": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS1p9zHrS4vacaPMMXPwJTaFIwOfxXCfEIwRl26WTm4qg&s=10",
     "Hurón": "https://www.clinicaveterinariazarpa.com/wp-content/uploads/2019/04/huron-cuidados-basicos-veterinario.jpg",
     "Loro": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQebDUS5U76EagNt8m7AP159B41i1YRnHOheNSrxtqvZOhmCEnwS8eU2JE&s=10",
     "Cobaya": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRdHHZ9xrQfd2w5Cft2Ev_BPC21t7hjzK-9iyvhce76sQ&s=10",
@@ -61,15 +61,14 @@ PET_IMAGES = {
     "Erizo": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSbQdAjoQMnTfbUa--3D-JcRG531VbWeD-VIRaWLt_97XEq9SJdY7Noks-Y&s=10"
 }
 
-# Mapeo exacto con los nombres de archivo de tu carpeta static
 PRODUCT_IMAGES = {
     "Placa Grabada": "/static/Placas Confort 3D.jpg",
     "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
     "Arnés Confort": "/static/Arnes Ergonomico.jpg",
     "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
-    "Bandana de Seda": "/static/Bandana de Seda.jpg",
-    "Moño de Gala": "/static/Moño de Gala.jpg",
-    "Cama Oropel": "/static/Cama Oropel.jpg"
+    "Bandana de Seda": "/static/Coleccion Velvet Gold.jpg",
+    "Moño de Gala": "/static/Logo dorado.jpg",
+    "Cama Oropel": "/static/Arnes Ergonomico.jpg"
 }
 
 COLOR_MAP = {
@@ -896,7 +895,7 @@ HOME_PAGE = """
       </a>
     </div>
 
-    <!-- Barra de búsqueda oculta en el login y visible tras iniciar sesión -->
+    <!-- Barra de búsqueda oculta por defecto en la vista de Login/Registro -->
     <div class="d-none align-items-center flex-grow-1 mx-4 position-relative" id="clientSearchWrapper">
       <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar placas, collares, arneses, camas..." oninput="handleSearchAutocomplete(this.value)">
       <div id="searchSuggestions" class="search-autocomplete-box"></div>
@@ -1027,8 +1026,8 @@ HOME_PAGE = """
         </div>
         <div class="col-md-3">
           <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <img src="/static/Moño de Gala.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
-            <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Moños de Gala</small></div>
+            <img src="/static/Logo dorado.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
+            <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Accesorios de Lujo</small></div>
           </div>
         </div>
       </div>
@@ -1506,16 +1505,10 @@ async function loadCatalog() {
       }
     });
 
-  const cardsContainer = $('clientCatalogCards');
+    const cardsContainer = $('clientCatalogCards');
     if (cardsContainer && data.accessory_types) {
       cardsContainer.innerHTML = data.accessory_types.map(acc => {
-        // Validación directa por nombre si la ruta del servidor presenta conflictos
-        let img = productImages[acc];
-        if (acc === 'Bandana de Seda') img = '/static/Bandana de Seda.jpg';
-        if (acc === 'Moño de Gala') img = '/static/Moño de Gala.jpg';
-        if (acc === 'Cama Oropel') img = '/static/Cama Oropel.jpg';
-        if (!img) img = '/static/Logo principal.jpg';
-
+        const img = productImages[acc] || '/static/Logo principal.jpg';
         const baseP = prices[acc] || 45000;
         const disc = discounts[acc] || 0;
         const finalP = getFinalProductPrice(acc);
@@ -1541,6 +1534,10 @@ async function loadCatalog() {
         `;
       }).join('');
     }
+  } catch (err) {
+    console.error("Error catálogo:", err);
+  }
+}
 
 function selectAccessoryFromCatalog(accName) {
   const sel = $('accessory_type');
@@ -1590,6 +1587,7 @@ function logout() {
 function showDashboard() {
   if ($('loginScreen'))$('loginScreen').classList.add('d-none');
   
+  // Mostrar la barra de búsqueda ahora que el usuario inició sesión
   if ($('clientSearchWrapper')) {
     $('clientSearchWrapper').classList.remove('d-none');$('clientSearchWrapper').classList.add('d-md-flex');
   }
