@@ -10,6 +10,7 @@ import re
 import secrets
 import sqlite3
 import time
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.2.0",
+    version="4.3.0",
 )
 
 if not STATIC_DIR.exists():
@@ -40,7 +41,10 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 bearer_scheme = HTTPBearer(auto_error=False)
 
 SIZES = ("XXS", "XS", "S", "M", "L", "XL", "XXL")
-ACCESSORY_TYPES = ("Placa Grabada", "Collar de Cuero", "Arnés Confort")
+ACCESSORY_TYPES = (
+    "Placa Grabada", "Collar de Cuero", "Arnés Confort", 
+    "Correa Elegance 3m", "Bandana de Seda", "Moño de Gala", "Cama Oropel"
+)
 COLORS = ("Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache")
 
 PET_TYPES = ("Perro", "Gato", "Conejo", "Hámster", "Hurón", "Loro", "Cobaya", "Capibara", "Erizo")
@@ -69,7 +73,11 @@ COLOR_MAP = {
 PRICES = {
     "Placa Grabada": 45000,
     "Collar de Cuero": 85000,
-    "Arnés Confort": 129900
+    "Arnés Confort": 129900,
+    "Correa Elegance 3m": 65000,
+    "Bandana de Seda": 38000,
+    "Moño de Gala": 29900,
+    "Cama Oropel": 189900
 }
 
 
@@ -127,6 +135,11 @@ class OrderStatusUpdate(BaseModel):
     status: str
 
 
+class InventoryUpdate(BaseModel):
+    product_name: str
+    stock: int
+
+
 def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
@@ -143,6 +156,7 @@ def initialize_database() -> None:
                 email TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'client',
+                active_session_token TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS customizations (
@@ -164,8 +178,20 @@ def initialize_database() -> None:
                 status TEXT NOT NULL DEFAULT 'Completado',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name TEXT NOT NULL UNIQUE,
+                stock INTEGER NOT NULL DEFAULT 25,
+                min_threshold INTEGER NOT NULL DEFAULT 5
+            );
             """
         )
+        # Inicializar inventario por defecto si está vacío
+        for prod in ACCESSORY_TYPES:
+            exists = connection.execute("SELECT id FROM inventory WHERE product_name = ?", (prod,)).fetchone()
+            if not exists:
+                connection.execute("INSERT INTO inventory (product_name, stock, min_threshold) VALUES (?, 30, 5)", (prod,))
+        connection.commit()
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -235,18 +261,44 @@ def current_user(
             detail="Inicia sesión para continuar.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user_id = decode_token(credentials.credentials)
+    token_str = credentials.credentials
+    user_id = decode_token(token_str)
     with get_connection() as connection:
         user = connection.execute(
-            "SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)
+            "SELECT id, name, email, role, active_session_token, created_at FROM users WHERE id = ?", (user_id,)
         ).fetchone()
     if user is None:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
+    
+    # Validar sesión única por dispositivo para Administrador
+    if user["email"] == ADMIN_EMAIL or user["role"] == "admin":
+        if user["active_session_token"] and user["active_session_token"] != token_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Esta cuenta de administrador ya inició sesión en otro dispositivo. Sesión cerrada aquí por seguridad."
+            )
+            
     return user
 
 
 @app.get("/api/catalog")
 def catalog() -> dict[str, Any]:
+    # Descuentos diarios o aleatorios basados en el día del mes o semilla fija diaria
+    day_seed = int(datetime.now().strftime("%d"))
+    discounts = {}
+    for idx, prod in enumerate(ACCESSORY_TYPES):
+        # Asignar un descuento aleatorio/rotativo entre 0%, 10%, 15% o 20%
+        if (idx + day_seed) % 3 == 0:
+            discounts[prod] = 15
+        elif (idx + day_seed) % 5 == 0:
+            discounts[prod] = 20
+        else:
+            discounts[prod] = 0
+
+    with get_connection() as connection:
+        inv_rows = connection.execute("SELECT product_name, stock, min_threshold FROM inventory").fetchall()
+        inventory_data = {r["product_name"]: {"stock": r["stock"], "min_threshold": r["min_threshold"]} for r in inv_rows}
+
     return {
         "accessory_types": ACCESSORY_TYPES, 
         "colors": COLORS, 
@@ -254,24 +306,30 @@ def catalog() -> dict[str, Any]:
         "pet_types": PET_TYPES,
         "pet_images": PET_IMAGES,
         "color_map": COLOR_MAP,
-        "prices": PRICES
+        "prices": PRICES,
+        "discounts": discounts,
+        "inventory": inventory_data
     }
 
 
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(user: UserRegister) -> dict[str, Any]:
+    token = encode_token(0) # Temporal para asignar
     with get_connection() as connection:
         try:
             cursor = connection.execute(
-                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'client')",
                 (user.name.strip(), user.email.lower(), hash_password(user.password)),
             )
             user_id = cursor.lastrowid
+            token = encode_token(user_id)
+            connection.execute("UPDATE users SET active_session_token = ? WHERE id = ?", (token, user_id))
+            connection.commit()
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="El correo ya está registrado.")
     return {
         "message": "¡Cuenta creada exitosamente!",
-        "access_token": encode_token(user_id),
+        "access_token": token,
         "token_type": "bearer",
         "user": {"id": user_id, "name": user.name.strip(), "email": user.email.lower(), "role": "client"},
     }
@@ -284,11 +342,20 @@ def login(user: UserLogin) -> dict[str, Any]:
             "SELECT id, name, email, password_hash, role FROM users WHERE email = ?",
             (user.email.lower(),),
         ).fetchone()
-    if stored_user is None or not verify_password(user.password, stored_user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+        if stored_user is None or not verify_password(user.password, stored_user["password_hash"]):
+            raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+        
+        token = encode_token(stored_user["id"])
+        # Registrar sesión activa (exclusiva para admin o general)
+        connection.execute(
+            "UPDATE users SET active_session_token = ? WHERE id = ?",
+            (token, stored_user["id"])
+        )
+        connection.commit()
+
     return {
         "message": "¡Autenticación completada!",
-        "access_token": encode_token(stored_user["id"]),
+        "access_token": token,
         "token_type": "bearer",
         "user": {
             "id": stored_user["id"],
@@ -312,7 +379,13 @@ def create_customization(
         raise HTTPException(status_code=422, detail="Color no disponible.")
     if customization.size not in SIZES:
         raise HTTPException(status_code=422, detail="Talla no disponible.")
+    
     with get_connection() as connection:
+        # Verificar stock en inventario
+        inv = connection.execute("SELECT stock FROM inventory WHERE product_name = ?", (customization.accessory_type,)).fetchone()
+        if inv and inv["stock"] <= 0:
+            raise HTTPException(status_code=400, detail=f"Lo sentimos, el producto '{customization.accessory_type}' está agotado en este momento.")
+
         cursor = connection.execute(
             """
             INSERT INTO customizations
@@ -431,6 +504,14 @@ def create_order(
                 status_code=400, detail="No puedes procesar una orden con el carrito vacío."
             )
 
+        # Descontar inventario por cada ítem comprado
+        for item in cart_items:
+            prod_name = item["accessory_type"]
+            connection.execute(
+                "UPDATE inventory SET stock = MAX(0, stock - 1) WHERE product_name = ?",
+                (prod_name,)
+            )
+
         cursor = connection.execute(
             """
             INSERT INTO orders (user_id, payment_method, total_amount)
@@ -440,6 +521,7 @@ def create_order(
         )
         order_id = cursor.lastrowid
         connection.execute("DELETE FROM customizations WHERE user_id = ?", (user["id"],))
+        connection.commit()
 
     return {
         "message": "¡Orden registrada con éxito!",
@@ -471,6 +553,11 @@ def init_admin_role_and_account() -> None:
     with get_connection() as conn:
         try:
             conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN active_session_token TEXT")
             conn.commit()
         except sqlite3.OperationalError:
             pass
@@ -508,11 +595,33 @@ def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, 
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
         total_revenue = conn.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders").fetchone()[0]
+        
+        # Ventas diarias (agrupadas por fecha)
+        daily_sales = conn.execute("""
+            SELECT DATE(created_at) as sale_date, COUNT(*) as orders_count, SUM(total_amount) as daily_revenue
+            FROM orders GROUP BY DATE(created_at) ORDER BY sale_date DESC LIMIT 10
+        """).fetchall()
+
+        # Estadísticas de productos más vendidos
+        top_products = conn.execute("""
+            SELECT c.accessory_type as product_name, COUNT(*) as total_sold
+            FROM customizations c JOIN orders o ON c.user_id = o.user_id GROUP BY c.accessory_type ORDER BY total_sold DESC
+        """).fetchall()
+        # Si no hay suficiente data de customizations en orders, respaldar con inventario o registros
+        if not top_products:
+            top_products = conn.execute("""
+                SELECT accessory_type as product_name, COUNT(*) as total_sold
+                FROM customizations GROUP BY accessory_type ORDER BY total_sold DESC
+            """).fetchall()
+
         recent_orders = conn.execute("""
             SELECT o.id, u.name as user_name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
             FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC
         """).fetchall()
+        
         all_users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
+        
+        inventory_rows = conn.execute("SELECT * FROM inventory").fetchall()
 
     return {
         "metrics": {
@@ -520,9 +629,26 @@ def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, 
             "orders_count": total_orders,
             "total_revenue": total_revenue
         },
+        "daily_sales": [dict(r) for r in daily_sales],
+        "top_products": [dict(r) for r in top_products],
+        "inventory": [dict(r) for r in inventory_rows],
         "orders": [dict(r) for r in recent_orders],
         "users": [dict(u) for u in all_users]
     }
+
+
+@app.put("/api/admin/inventory")
+def update_inventory(
+    inv_update: InventoryUpdate,
+    admin: sqlite3.Row = Depends(current_admin),
+) -> dict[str, Any]:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE inventory SET stock = ? WHERE product_name = ?",
+            (inv_update.stock, inv_update.product_name)
+        )
+        conn.commit()
+    return {"message": f"Inventario de '{inv_update.product_name}' actualizado a {inv_update.stock} unidades."}
 
 
 @app.put("/api/admin/orders/{order_id}/status")
@@ -704,15 +830,11 @@ HOME_PAGE = """
     #checkout { display: none; }
     .pay-card { border: 2px solid #ebdcd5; border-radius: 14px; padding: 16px; cursor: pointer; transition: all 0.2s ease; background: #ffffff; height: 100%; }
     .pay-card:hover, .pay-card.active { border-color: var(--gold); background: #fffdf7; transform: translateY(-3px); box-shadow: 0 8px 20px rgba(212, 175, 55, 0.15); }
-    .review-card { background: rgba(255, 255, 255, 0.95); border-radius: 16px; border: 1px solid #efe3db; padding: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.03); height: 100%; }
-    .gallery-img { border-radius: 16px; height: 220px; object-fit: cover; width: 100%; transition: transform 0.3s ease; }
-    .gallery-card:hover .gallery-img { transform: scale(1.03); }
     #alert { position: fixed; right: 25px; top: 85px; z-index: 999; }
     .cart-btn-nav { position: relative; border-radius: 50px; background: #ffffff; border: 1px solid #ebdcd5; padding: 6px 16px; cursor: pointer; transition: all 0.2s ease; }
     .cart-btn-nav:hover { background: #fdfbf7; border-color: var(--gold); }
     .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--gold-dark); color: #fff; font-size: 0.7rem; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
     .sidebar-img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; }
-    .cart-item-preview { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 0.75rem; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
   </style>
 </head>
 <body>
@@ -728,6 +850,11 @@ HOME_PAGE = """
         <img src="/static/Logo principal.jpg" alt="LuxPet Logo Principal" class="brand-logo-img">
         <span>LuxPet <span class="fs-6 text-muted font-sans fw-normal">Boutique</span></span>
       </a>
+    </div>
+
+    <!-- Buscador interactivo en el Home para Clientes -->
+    <div class="d-none d-md-flex align-items-center flex-grow-1 mx-4" id="clientSearchWrapper">
+      <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar accesorios, placas, camas, arneses..." oninput="filterCatalogHome(this.value)">
     </div>
 
     <div class="d-flex align-items-center gap-3" id="userNavStatus"></div>
@@ -763,8 +890,8 @@ HOME_PAGE = """
         </button>
       </div>
 
-      <h6 class="fw-bold text-uppercase small text-muted mb-3">Catálogo de Productos</h6>
-      <div class="row g-2 mb-4">
+      <h6 class="fw-bold text-uppercase small text-muted mb-3">Catálogo Ampliado & Ofertas</h6>
+      <div class="row g-2 mb-4" id="sidebarCatalogGrid">
         <div class="col-6">
           <img src="/static/Coleccion Velvet Gold.jpg" class="sidebar-img" alt="Collares Luxe">
           <span class="d-block small fw-semibold text-center mt-1">Collares Luxe</span>
@@ -772,14 +899,6 @@ HOME_PAGE = """
         <div class="col-6">
           <img src="/static/Placas Confort 3D.jpg" class="sidebar-img" alt="Placas Láser">
           <span class="d-block small fw-semibold text-center mt-1">Placas Láser</span>
-        </div>
-        <div class="col-6 mt-2">
-          <img src="/static/Arnes Ergonomico.jpg" class="sidebar-img" alt="Arneses Soft">
-          <span class="d-block small fw-semibold text-center mt-1">Arneses Soft</span>
-        </div>
-        <div class="col-6 mt-2">
-          <img src="/static/Coleccion Velvet Gold.jpg" class="sidebar-img" alt="Correas Gold">
-          <span class="d-block small fw-semibold text-center mt-1">Correas Gold</span>
         </div>
       </div>
 
@@ -867,7 +986,7 @@ HOME_PAGE = """
 
           <span class="text-uppercase small fw-bold tracking-wider d-block text-center text-lg-start mt-2" style="color:var(--gold-dark); letter-spacing: 2px;">Hecho a mano en Italia & Colombia</span>
           <h1 class="display-5 fw-bold mt-2 mb-3 text-center text-lg-start">Elegancia y ternura para tu mejor amigo.</h1>
-          <p class="lead text-secondary mb-4 text-center text-lg-start">Diseña placas, collares y arneses de alta gama con personalización láser en tiempo real.</p>
+          <p class="lead text-secondary mb-4 text-center text-lg-start">Diseña placas, collares, arneses y camas de alta gama con grabado láser en tiempo real y descuentos especiales.</p>
           
           <div class="d-flex gap-3 justify-content-center justify-content-lg-start">
             <a href="#designer" class="btn btn-gold btn-lg">Diseñar Accesorio</a>
@@ -879,7 +998,7 @@ HOME_PAGE = """
           <div class="preview-card">
             <div class="d-flex justify-content-between align-items-center mb-3">
               <span class="fw-bold text-uppercase small text-muted">Vista previa 3D en vivo</span>
-              <span class="badge bg-light text-dark border">Grabado láser en oro</span>
+              <span class="badge bg-warning text-dark border" id="badgeDiscountPreview">¡Descuento del Día!</span>
             </div>
             <div class="preview-box">
               <img id="prevPetImg" src="https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80" class="preview-pet-img" alt="Mascota">
@@ -897,7 +1016,7 @@ HOME_PAGE = """
               <div class="col-3"><small class="text-muted d-block">Animal</small><strong id="lblPetType">Perro</strong></div>
               <div class="col-3"><small class="text-muted d-block">Talla</small><strong id="lblSize">M</strong></div>
               <div class="col-3"><small class="text-muted d-block">Color</small><strong id="lblColor">Rosa empolvado</strong></div>
-              <div class="col-3"><small class="text-muted d-block">Estilo</small><strong id="lblType">Collar</strong></div>
+              <div class="col-3"><small class="text-muted d-block">Precio</small><strong id="lblPrice" class="text-success">$0</strong></div>
             </div>
           </div>
         </div>
@@ -919,8 +1038,8 @@ HOME_PAGE = """
         <form id="designForm">
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label fw-semibold small">Tipo de accesorio</label>
-              <select id="accessory_type" class="form-select" required><option value="">Seleccionar...</option></select>
+              <label class="form-label fw-semibold small">Tipo de accesorio (Ampliado)</label>
+              <select id="accessory_type" class="form-select" required onchange="updatePreview()"><option value="">Seleccionar...</option></select>
             </div>
             <div class="col-md-6">
               <label class="form-label fw-semibold small">Tipo de mascota</label>
@@ -984,7 +1103,7 @@ HOME_PAGE = """
         </div>
 
         <div class="mt-4 p-4 bg-light rounded-4 text-center border">
-          <p class="mb-2 text-muted small">Monto Total: <strong class="text-dark fs-4" id="checkoutTotalAmount">$0 COP</strong> <span class="text-muted">(IVA incluido)</span></p>
+          <p class="mb-2 text-muted small">Monto Total: <strong class="text-dark fs-4" id="checkoutTotalAmount">$0 COP</strong> <span class="text-muted">(IVA y Descuentos del día incluidos)</span></p>
           <button class="btn btn-dark btn-lg px-5 rounded-pill mt-2" onclick="openSelectedPaymentModal()">Completar Orden de Compra 🛍️</button>
         </div>
       </div>
@@ -1040,20 +1159,8 @@ HOME_PAGE = """
   </div>
 </div>
 
-<div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content rounded-4 border-0 p-4 text-center">
-      <div class="modal-body">
-        <div class="spinner-border text-warning mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
-        <h4 class="h5 font-heading">Procesando pago seguro...</h4>
-        <p class="text-muted small mb-0">Conectando con el método seleccionado (<span id="modalPayMethod">Tarjeta</span>)...</p>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
-let token = localStorage.getItem('luxpet_token'), mode = 'login', colorMap = {}, prices = {}, petImages = {}, currentUser = null;
+let token = localStorage.getItem('luxpet_token'), mode = 'login', colorMap = {}, prices = {}, discounts = {}, inventory = {}, petImages = {}, currentUser = null;
 let selectedMethod = 'Tarjeta de Crédito';
 let userCartItems = [];
 const $ = id => document.getElementById(id);
@@ -1075,7 +1182,7 @@ function notify(message, good=false) {
 }
 
 function barkDog() {
-  notify('🐾 !Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
+  notify('🐾 ¡Guau! Tu mascota está feliz con tus elecciones de diseño.', true);
 }
 
 function selectPay(el, method) {
@@ -1149,22 +1256,52 @@ async function api(url, options={}) {
   return data; 
 }
 
+function getFinalProductPrice(accessoryType) {
+  const basePrice = prices[accessoryType] || 45000;
+  const discountPct = discounts[accessoryType] || 0;
+  return basePrice * (1 - discountPct / 100);
+}
+
 function updatePreview() {
   const petName = $('pet_name')?.value.trim() || 'Mascota';
   const petType = $('pet_type')?.value || 'Perro';
   const engraving = $('engraving')?.value.trim() || '';
   const color = $('color')?.value || 'Rosa empolvado';
   const size = $('size')?.value || 'M';
-  const type = $('accessory_type')?.value || 'Collar';
+  const type = $('accessory_type')?.value || 'Collar de Cuero';
 
   if ($('prevPetName'))$('prevPetName').textContent = petName;
   if ($('prevEngraving'))$('prevEngraving').textContent = engraving;
   if ($('lblSize'))$('lblSize').textContent = size;
   if ($('lblColor'))$('lblColor').textContent = color;
-  if ($('lblType'))$('lblType').textContent = type.split(' ')[0];
   if ($('lblPetType'))$('lblPetType').textContent = petType;
+  
+  const finalP = getFinalProductPrice(type);
+  const disc = discounts[type] || 0;
+  if ($('lblPrice')) {$('lblPrice').innerHTML = disc > 0 ? `<span class="text-decoration-line-through text-muted small">${formatCOP(prices[type] || 45000)}</span> <span class="text-success">${formatCOP(finalP)}</span>` : formatCOP(finalP);
+  }
+  if ($('badgeDiscountPreview')) {$('badgeDiscountPreview').textContent = disc > 0 ? `🔥 ¡${disc}% Descuento Hoy!` : '✨ Alta Calidad';
+  }
+
   if (petImages && petImages[petType] && $('prevPetImg'))$('prevPetImg').src = petImages[petType];
   if (color && colorMap[color] && $('prevStrap'))$('prevStrap').style.backgroundColor = colorMap[color];
+}
+
+function filterCatalogHome(query) {
+  const q = query.toLowerCase();
+  const selectAcc = $('accessory_type');
+  if (!selectAcc) return;
+  
+  // Filtrar o resaltar opciones en el selector de tipo de accesorio
+  const options = selectAcc.options;
+  for (let i = 0; i < options.length; i++) {
+    const text = options[i].text.toLowerCase();
+    if (text.includes(q) || q === '') {
+      options[i].style.display = '';
+    } else {
+      options[i].style.display = 'none';
+    }
+  }
 }
 
 async function loadCatalog() { 
@@ -1172,13 +1309,21 @@ async function loadCatalog() {
     const data = await api('/api/catalog'); 
     colorMap = data.color_map || {};
     prices = data.prices || {};
+    discounts = data.discounts || {};
+    inventory = data.inventory || {};
     petImages = data.pet_images || {};
     
     [['accessory_type', data.accessory_types], ['pet_type', data.pet_types], ['color', data.colors], ['size', data.sizes]].forEach(([id, items]) => {
       const selectEl = $(id);
       if (selectEl && items) {
         selectEl.innerHTML = '<option value="">Seleccionar...</option>';
-        items.forEach(item => selectEl.insertAdjacentHTML('beforeend', `<option>${item}</option>`));
+        items.forEach(item => {
+          let labelText = item;
+          if (id === 'accessory_type' && discounts[item] && discounts[item] > 0) {
+            labelText += ` (🔥 ${discounts[item]}% OFF)`;
+          }
+          selectEl.insertAdjacentHTML('beforeend', `<option value="${item}">${labelText}</option>`);
+        });
       }
     });
   } catch (err) {
@@ -1224,6 +1369,23 @@ function logout() {
 
 function showDashboard() {
   if ($('loginScreen'))$('loginScreen').classList.add('d-none');
+  
+  // REQUISITO: Si el usuario es administrador, NO mostrar la vista de cliente para comprar, solo administrar
+  if (currentUser && (currentUser.email === 'julianjuanm@gmail.com' || currentUser.role === 'admin')) {
+    if ($('mainContent'))$('mainContent').classList.add('d-none');
+    if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
+    if ($('userNavStatus')) {$('userNavStatus').innerHTML = `
+        <div class="d-flex align-items-center gap-2 border-start ps-3">
+          <span class="small fw-semibold text-danger">👑 Panel Administrador Exclusivo</span>
+          <button onclick="logout()" class="btn btn-sm btn-outline-danger rounded-pill ms-2">Salir</button>
+        </div>
+      `;
+    }
+    renderAdminDashboard();
+    return;
+  }
+
+  // Vista de Cliente Normal
   if ($('mainContent'))$('mainContent').classList.remove('d-none');
   if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
 
@@ -1274,7 +1436,7 @@ async function removeFromCart(itemId) {
 }
 
 function calculateCartTotal() {
-  return userCartItems.reduce((acc, item) => acc + (prices[item.accessory_type] || 45000), 0);
+  return userCartItems.reduce((acc, item) => acc + getFinalProductPrice(item.accessory_type), 0);
 }
 
 function formatCOP(amount) {
@@ -1288,7 +1450,7 @@ function openCartModal() {
     modalList.innerHTML = userCartItems.length === 0 ? '<p class="text-center py-4 text-muted">Tu carrito está vacío.</p>' :
       userCartItems.map(item => `
         <div class="d-flex align-items-center justify-content-between p-3 mb-2 bg-light rounded-3 border">
-          <div><h6 class="mb-0 fw-bold">${item.accessory_type} - ${item.pet_name}</h6><small class="text-muted">${item.color} | Talla ${item.size}</small></div>
+          <div><h6 class="mb-0 fw-bold">${item.accessory_type} - ${item.pet_name}</h6><small class="text-muted">${item.color} | Talla ${item.size} | Precio: ${formatCOP(getFinalProductPrice(item.accessory_type))}</small></div>
           <button class="btn btn-sm btn-outline-danger" onclick="removeFromCart(${item.id})">❌</button>
         </div>
       `).join('');
@@ -1338,20 +1500,12 @@ async function loadDesigns() {
 ADMIN_SCRIPT_EXTENSION = """
 <script>
 (function() {
-  const oldShowDashboard = window.showDashboard;
-  window.showDashboard = function() {
-    if (oldShowDashboard) oldShowDashboard();
-    if (currentUser && (currentUser.email === 'julianjuanm@gmail.com' || currentUser.role === 'admin')) {
-      renderAdminDashboard();
-    }
-  };
-
   window.refreshAdminDashboard = async function() {
-    notify('Sincronizando registros nuevos...', true);
+    notify('Sincronizando registros nuevos e inventario...', true);
     await renderAdminDashboard();
   };
 
-  async function renderAdminDashboard() {
+  window.renderAdminDashboard = async function() {
     try {
       const data = await api('/api/admin/metrics');
       let adminSection = document.getElementById('adminSection');
@@ -1359,23 +1513,40 @@ ADMIN_SCRIPT_EXTENSION = """
         adminSection = document.createElement('section');
         adminSection.id = 'adminSection';
         adminSection.className = 'container py-4 my-4';
-        const main = document.querySelector('main');
-        if (main) main.insertBefore(adminSection, main.firstChild);
+        document.body.appendChild(adminSection);
+      }
+
+      // Comprobar alertas de inventario bajo o agotado
+      let stockAlertsHTML = '';
+      if (data.inventory && data.inventory.length > 0) {
+        const lowStockItems = data.inventory.filter(i => i.stock <= i.min_threshold);
+        if (lowStockItems.length > 0) {
+          stockAlertsHTML = `
+            <div class="alert alert-danger shadow-sm rounded-4 mb-4 p-3 border-0">
+              <h5 class="fw-bold mb-1">⚠️ Alerta Crítica de Inventario / Stock Bajo:</h5>
+              <p class="small mb-2">Los siguientes productos están por agotarse o llegaron al límite mínimo en la bodega:</p>
+              <ul class="mb-0 small">
+                ${lowStockItems.map(i => `<li><strong>${i.product_name}</strong> - Solo quedan <strong>${i.stock} unidades</strong> disponibles (Mínimo: ${i.min_threshold}).</li>`).join('')}
+              </ul>
+            </div>
+          `;
+        }
       }
 
       adminSection.innerHTML = `
         <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
-              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN</span>
+              <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN EXCLUSIVO</span>
               <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
             </div>
             <div class="d-flex gap-2">
               <button onclick="refreshAdminDashboard()" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Actualizar Registros</button>
               <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Ventas CSV</button>
-              <span class="fs-1">🛠</span>
             </div>
           </div>
+
+          ${stockAlertsHTML}
 
           <div class="row g-3 mb-4 text-center">
             <div class="col-md-4">
@@ -1386,7 +1557,7 @@ ADMIN_SCRIPT_EXTENSION = """
             </div>
             <div class="col-md-4">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase fw-bold">Ventas Totales</small>
+                <small class="text-muted d-block uppercase fw-bold">Ventas Totales (Pedidos)</small>
                 <strong class="fs-2 text-dark">${data.metrics.orders_count}</strong>
               </div>
             </div>
@@ -1398,17 +1569,25 @@ ADMIN_SCRIPT_EXTENSION = """
             </div>
           </div>
 
-          <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
+          <ul class="nav nav-pills mb-3" id="adminTabs" role="tablist">
             <li class="nav-item">
-              <button class="nav-link active rounded-pill px-4" id="pills-orders-tab" data-bs-toggle="pill" data-bs-target="#pills-orders" type="button">Gestión de Órdenes Globales</button>
+              <button class="nav-link active rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-orders" type="button">Historial de Órdenes & Pedidos</button>
             </li>
             <li class="nav-item">
-              <button class="nav-link rounded-pill px-4" id="pills-users-tab" data-bs-toggle="pill" data-bs-target="#pills-users" type="button">Gestión de Usuarios</button>
+              <button class="nav-link rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-sales" type="button">Ventas Diarias & Estadísticas</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-inventory" type="button">Control de Inventario & Bodega</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-users" type="button">Gestión de Usuarios</button>
             </li>
           </ul>
 
-          <div class="tab-content" id="pills-tabContent">
-            <div class="tab-pane fade show active" id="pills-orders">
+          <div class="tab-content" id="adminTabContent">
+            
+            <!-- Órdenes -->
+            <div class="tab-pane fade show active" id="tab-orders">
               <div class="table-responsive">
                 <table class="table table-hover align-middle small">
                   <thead class="table-dark">
@@ -1444,7 +1623,80 @@ ADMIN_SCRIPT_EXTENSION = """
               </div>
             </div>
 
-            <div class="tab-pane fade" id="pills-users">
+            <!-- Ventas Diarias & Estadísticas de productos -->
+            <div class="tab-pane fade" id="tab-sales">
+              <div class="row g-4">
+                <div class="col-md-6">
+                  <h5 class="fw-bold mb-3">📈 Ventas Diarias Registradas</h5>
+                  <div class="table-responsive">
+                    <table class="table table-bordered bg-white small">
+                      <thead class="table-secondary">
+                        <tr><th>Fecha</th><th>Pedidos</th><th>Recaudación Diaria</th></tr>
+                      </thead>
+                      <tbody>
+                        ${data.daily_sales.length ? data.daily_sales.map(ds => `
+                          <tr>
+                            <td>${ds.sale_date}</td>
+                            <td>${ds.orders_count}</td>
+                            <td><strong>${formatCOP(ds.daily_revenue)}</strong></td>
+                          </tr>
+                        `).join('') : '<tr><td colspan="3" class="text-center text-muted">Sin ventas diarias aún.</td></tr>'}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="col-md-6">
+                  <h5 class="fw-bold mb-3">🏆 Productos Más Vendidos / Diseñados</h5>
+                  <div class="table-responsive">
+                    <table class="table table-bordered bg-white small">
+                      <thead class="table-secondary">
+                        <tr><th>Producto / Accesorio</th><th>Cantidad Solicitada</th></tr>
+                      </thead>
+                      <tbody>
+                        ${data.top_products.length ? data.top_products.map(tp => `
+                          <tr>
+                            <td>${tp.product_name}</td>
+                            <td><span class="badge bg-success">${tp.total_sold} unidades</span></td>
+                          </tr>
+                        `).join('') : '<tr><td colspan="2" class="text-center text-muted">Sin estadísticas aún.</td></tr>'}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Control de Inventario & Bodega -->
+            <div class="tab-pane fade" id="tab-inventory">
+              <h5 class="fw-bold mb-3">📦 Disponibilidad en Bodega & Alertas de Stock</h5>
+              <div class="table-responsive">
+                <table class="table table-hover align-middle small bg-white">
+                  <thead class="table-dark">
+                    <tr><th>Producto</th><th>Stock Actual</th><th>Umbral Mínimo</th><th>Estado</th><th>Acción / Reabastecer</th></tr>
+                  </thead>
+                  <tbody>
+                    ${data.inventory.map(inv => `
+                      <tr>
+                        <td><strong>${inv.product_name}</strong></td>
+                        <td><span class="badge ${inv.stock <= inv.min_threshold ? 'bg-danger' : 'bg-success'} fs-6">${inv.stock}</span></td>
+                        <td>${inv.min_threshold}</td>
+                        <td>${inv.stock <= inv.min_threshold ? '⚠️ Stock Bajo (Agotándose)' : '✅ Disponible'}</td>
+                        <td>
+                          <div class="input-group input-group-sm" style="max-width: 180px;">
+                            <input type="number" class="form-control" id="inv_input_${inv.id}" value="${inv.stock}" min="0">
+                            <button class="btn btn-outline-dark" onclick="updateInventoryStock('${inv.product_name}',${inv.id})">Guardar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Usuarios -->
+            <div class="tab-pane fade" id="tab-users">
               <div class="table-responsive">
                 <table class="table table-hover align-middle small">
                   <thead class="table-dark">
@@ -1474,13 +1726,30 @@ ADMIN_SCRIPT_EXTENSION = """
                 </table>
               </div>
             </div>
+
           </div>
         </div>
       `;
     } catch(err) {
       console.error('Error al cargar panel de administración:', err);
     }
-  }
+  };
+
+  window.updateInventoryStock = async function(productName, id) {
+    const inputEl = document.getElementById(`inv_input_${id}`);
+    if (!inputEl) return;
+    const newStock = parseInt(inputEl.value);
+    try {
+      const res = await api('/api/admin/inventory', {
+        method: 'PUT',
+        body: JSON.stringify({ product_name: productName, stock: newStock })
+      });
+      notify(res.message, true);
+      renderAdminDashboard();
+    } catch(err) {
+      notify(err.message);
+    }
+  };
 
   window.changeOrderStatus = async function(orderId, newStatus) {
     try {
@@ -1495,7 +1764,7 @@ ADMIN_SCRIPT_EXTENSION = """
   };
 
   window.deleteUserByAdmin = async function(userId) {
-    if (!confirm('¿Estás seguro de que deseas eliminar este usuario y todos sus registros asociadas?')) return;
+    if (!confirm('¿Estás seguro de que deseas eliminar este usuario y todos sus registros asociados?')) return;
     try {
       const res = await api(`/api/admin/users/${userId}`, { method: 'DELETE' });
       notify(res.message, true);
@@ -1516,198 +1785,3 @@ ADMIN_SCRIPT_EXTENSION = """
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home_admin_extended() -> str:
     return HOME_PAGE.replace("</body>", f"{ADMIN_SCRIPT_EXTENSION}\n</body>")
-
-
-# ==============================================================================
-# ADICIONES DE MEJORAS Y SEGURIDAD PEDIDAS (SIN ELIMINAR NI EDITAR LO ANTERIOR)
-# ==============================================================================
-
-import asyncio
-from enum import Enum
-from typing import Literal, Generator
-from fastapi import Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-
-try:
-    import jwt as pyjwt
-except ImportError:
-    pyjwt = None
-
-STRICT_SECRET_KEY = os.getenv("LUXPET_SECRET_KEY")
-if not STRICT_SECRET_KEY:
-    raise RuntimeError("SEGURIDAD CRÍTICA: Debes configurar la variable de entorno 'LUXPET_SECRET_KEY'.")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app_inst, requests_limit: int = 10, window_seconds: int = 60):
-        super().__init__(app_inst)
-        self.requests_limit = requests_limit
-        self.window_seconds = window_seconds
-        self.clients: dict[str, list[float]] = {}
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/api/auth/login" and request.method == "POST":
-            client_ip = request.client.host if request.client else "127.0.0.1"
-            now = time.time()
-            history = [t for t in self.clients.get(client_ip, []) if now - t < self.window_seconds]
-            if len(history) >= self.requests_limit:
-                return Response(
-                    content=json.dumps({"detail": "Demasiadas peticiones. Intenta de nuevo más tarde."}),
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    media_type="application/json"
-                )
-            history.append(now)
-            self.clients[client_ip] = history
-        return await call_next(request)
-
-app.add_middleware(RateLimitMiddleware)
-
-@app.post("/api/v2/auth/login")
-def login_http_only(user: UserLogin, response: Response) -> dict[str, Any]:
-    res = login(user)
-    response.set_cookie(
-        key="access_token",
-        value=res["access_token"],
-        httponly=True,
-        secure=True,
-        samesite="strict",
-        max_age=TOKEN_TTL_SECONDS
-    )
-    return res
-
-def encode_token_secure(user_id: int) -> str:
-    if pyjwt:
-        payload = {"sub": str(user_id), "exp": int(time.time()) + TOKEN_TTL_SECONDS}
-        return pyjwt.encode(payload, STRICT_SECRET_KEY, algorithm="HS256")
-    return encode_token(user_id)
-
-def decode_token_secure(token: str) -> int:
-    if pyjwt:
-        try:
-            payload = pyjwt.decode(token, STRICT_SECRET_KEY, algorithms=["HS256"])
-            return int(payload["sub"])
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token inválido o expirado.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    return decode_token(token)
-
-def get_db_connection_safe() -> Generator[sqlite3.Connection, None, None]:
-    conn = sqlite3.connect(DATABASE_PATH, timeout=15.0)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-def common_email_validator(value: str) -> str:
-    normalized = value.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
-        raise ValueError("Introduce un correo válido.")
-    return normalized
-
-SizeEnum = Literal["XXS", "XS", "S", "M", "L", "XL", "XXL"]
-AccessoryEnum = Literal["Placa Grabada", "Collar de Cuero", "Arnés Confort"]
-ColorEnum = Literal["Rosa empolvado", "Azul noche", "Verde salvia", "Lavanda", "Dorado Luxe", "Negro Azabache"]
-
-class BaseCustomizationModel(BaseModel):
-    accessory_type: AccessoryEnum
-    pet_name: str = Field(min_length=1, max_length=40)
-    pet_type: str = Field(default="Perro")
-    color: ColorEnum
-    size: SizeEnum
-    engraving: str = Field(default="", max_length=80)
-
-class CustomizationSchema(BaseCustomizationModel):
-    pass
-
-def get_user_profile_v2(user_id: int, conn: sqlite3.Connection = Depends(get_db_connection_safe)) -> dict[str, Any] | None:
-    row = conn.execute("SELECT id, name, email, role, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
-    return dict(row) if row else None
-
-
-# ==============================================================================
-# INTEGRACIÓN DE BASE DE DATOS AVANZADA (PostgreSQL / SQLAlchemy)
-# ==============================================================================
-
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
-
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./luxpet_advanced.db")
-
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class DBUser(Base):
-    __tablename__ = "users_v2"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(80), nullable=False)
-    email = Column(String(120), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    role = Column(String(20), default="client", nullable=False)
-    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
-
-    customizations = relationship("DBCustomization", back_populates="user", cascade="all, delete-orphan")
-    orders = relationship("DBOrder", back_populates="user", cascade="all, delete-orphan")
-
-
-class DBCustomization(Base):
-    __tablename__ = "customizations_v2"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users_v2.id", ondelete="CASCADE"), nullable=False)
-    accessory_type = Column(String(50), nullable=False)
-    pet_name = Column(String(40), nullable=False)
-    pet_type = Column(String(30), default="Perro", nullable=False)
-    color = Column(String(50), nullable=False)
-    size = Column(String(10), nullable=False)
-    engraving = Column(String(80), default="", nullable=False)
-    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
-
-    user = relationship("DBUser", back_populates="customizations")
-
-
-class DBOrder(Base):
-    __tablename__ = "orders_v2"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users_v2.id", ondelete="CASCADE"), nullable=False)
-    payment_method = Column(String(50), nullable=False)
-    total_amount = Column(Float, nullable=False)
-    status = Column(String(30), default="Completado", nullable=False)
-    created_at = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
-
-    user = relationship("DBUser", back_populates="orders")
-
-
-def init_sqlalchemy_database() -> None:
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as e:
-        print(f"Aviso al inicializar tablas SQLAlchemy: {e}")
-
-def get_db_session() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-init_sqlalchemy_database()
