@@ -62,14 +62,17 @@ PET_IMAGES = {
 }
 
 # Mapeo exacto con los nombres de archivo de tu carpeta static
+from urllib.parse import quote
+
+# Rutas codificadas de manera segura para el navegador
 PRODUCT_IMAGES = {
-    "Placa Grabada": "/static/Placas Confort 3D.jpg",
-    "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
-    "Arnés Confort": "/static/Arnes Ergonomico.jpg",
-    "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
-    "Bandana de Seda": "/static/Bandana de Seda.jpg",
-    "Moño de Gala": "/static/Moño de Gala.jpg",
-    "Cama Oropel": "/static/Cama Oropel.jpg"
+    "Placa Grabada": f"/static/{quote('Placas Confort 3D.jpg')}",
+    "Collar de Cuero": f"/static/{quote('Coleccion Velvet Gold.jpg')}",
+    "Arnés Confort": f"/static/{quote('Arnes Ergonomico.jpg')}",
+    "Correa Elegance 3m": f"/static/{quote('Coleccion Velvet Gold.jpg')}",
+    "Bandana de Seda": f"/static/{quote('Bandana de Seda.jpg')}",
+    "Moño de Gala": f"/static/{quote('Moño de Gala.jpg')}",  # O si renombras el archivo: quote('Mono de Gala.jpg')
+    "Cama Oropel": f"/static/{quote('Cama Oropel.jpg')}"
 }
 
 COLOR_MAP = {
