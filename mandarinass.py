@@ -10,7 +10,7 @@ import re
 import secrets
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -31,7 +31,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24
 app = FastAPI(
     title="LuxPet Boutique Premium",
     description="Personaliza accesorios exclusivos para tu mascota.",
-    version="4.3.0",
+    version="4.5.0",
 )
 
 if not STATIC_DIR.exists():
@@ -61,6 +61,16 @@ PET_IMAGES = {
     "Erizo": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSbQdAjoQMnTfbUa--3D-JcRG531VbWeD-VIRaWLt_97XEq9SJdY7Noks-Y&s=10"
 }
 
+PRODUCT_IMAGES = {
+    "Placa Grabada": "/static/Placas Confort 3D.jpg",
+    "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
+    "Arnés Confort": "/static/Arnes Ergonomico.jpg",
+    "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
+    "Bandana de Seda": "/static/Coleccion Velvet Gold.jpg",
+    "Moño de Gala": "/static/Logo dorado.jpg",
+    "Cama Oropel": "/static/Arnes Ergonomico.jpg"
+}
+
 COLOR_MAP = {
     "Rosa empolvado": "#f2a6b4",
     "Azul noche": "#1b263b",
@@ -78,6 +88,12 @@ PRICES = {
     "Bandana de Seda": 38000,
     "Moño de Gala": 29900,
     "Cama Oropel": 189900
+}
+
+COUPONS = {
+    "LUXPET10": 10,
+    "WELCOME": 15,
+    "VIP20": 20
 }
 
 
@@ -129,6 +145,7 @@ class CustomizationUpdate(BaseModel):
 class OrderCreate(BaseModel):
     payment_method: str
     total_amount: float
+    coupon_code: str | None = None
 
 
 class OrderStatusUpdate(BaseModel):
@@ -176,6 +193,7 @@ def initialize_database() -> None:
                 payment_method TEXT NOT NULL,
                 total_amount REAL NOT NULL,
                 status TEXT NOT NULL DEFAULT 'Completado',
+                coupon_applied TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS inventory (
@@ -186,7 +204,6 @@ def initialize_database() -> None:
             );
             """
         )
-        # Inicializar inventario por defecto si está vacío
         for prod in ACCESSORY_TYPES:
             exists = connection.execute("SELECT id FROM inventory WHERE product_name = ?", (prod,)).fetchone()
             if not exists:
@@ -270,7 +287,6 @@ def current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
     
-    # Validar sesión única por dispositivo para Administrador
     if user["email"] == ADMIN_EMAIL or user["role"] == "admin":
         if user["active_session_token"] and user["active_session_token"] != token_str:
             raise HTTPException(
@@ -283,11 +299,9 @@ def current_user(
 
 @app.get("/api/catalog")
 def catalog() -> dict[str, Any]:
-    # Descuentos diarios o aleatorios basados en el día del mes o semilla fija diaria
     day_seed = int(datetime.now().strftime("%d"))
     discounts = {}
     for idx, prod in enumerate(ACCESSORY_TYPES):
-        # Asignar un descuento aleatorio/rotativo entre 0%, 10%, 15% o 20%
         if (idx + day_seed) % 3 == 0:
             discounts[prod] = 15
         elif (idx + day_seed) % 5 == 0:
@@ -305,6 +319,7 @@ def catalog() -> dict[str, Any]:
         "sizes": SIZES,
         "pet_types": PET_TYPES,
         "pet_images": PET_IMAGES,
+        "product_images": PRODUCT_IMAGES,
         "color_map": COLOR_MAP,
         "prices": PRICES,
         "discounts": discounts,
@@ -314,8 +329,14 @@ def catalog() -> dict[str, Any]:
 
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(user: UserRegister) -> dict[str, Any]:
-    token = encode_token(0) # Temporal para asignar
     with get_connection() as connection:
+        existing = connection.execute("SELECT id, name, email FROM users WHERE email = ?", (user.email.lower(),)).fetchone()
+        if existing:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"El correo '{user.email}' ya está registrado. Por favor inicia sesión con tu cuenta existente."
+            )
+
         try:
             cursor = connection.execute(
                 "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'client')",
@@ -326,7 +347,8 @@ def register(user: UserRegister) -> dict[str, Any]:
             connection.execute("UPDATE users SET active_session_token = ? WHERE id = ?", (token, user_id))
             connection.commit()
         except sqlite3.IntegrityError:
-            raise HTTPException(status_code=409, detail="El correo ya está registrado.")
+            raise HTTPException(status_code=409, detail="El correo ya está registrado en el sistema.")
+
     return {
         "message": "¡Cuenta creada exitosamente!",
         "access_token": token,
@@ -346,7 +368,6 @@ def login(user: UserLogin) -> dict[str, Any]:
             raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
         
         token = encode_token(stored_user["id"])
-        # Registrar sesión activa (exclusiva para admin o general)
         connection.execute(
             "UPDATE users SET active_session_token = ? WHERE id = ?",
             (token, stored_user["id"])
@@ -381,10 +402,9 @@ def create_customization(
         raise HTTPException(status_code=422, detail="Talla no disponible.")
     
     with get_connection() as connection:
-        # Verificar stock en inventario
         inv = connection.execute("SELECT stock FROM inventory WHERE product_name = ?", (customization.accessory_type,)).fetchone()
         if inv and inv["stock"] <= 0:
-            raise HTTPException(status_code=400, detail=f"Lo sentimos, el producto '{customization.accessory_type}' está agotado en este momento.")
+            raise HTTPException(status_code=400, detail=f"Lo sentimos, el producto '{customization.accessory_type}' está agotado.")
 
         cursor = connection.execute(
             """
@@ -437,56 +457,26 @@ def delete_customization(
 
 @app.get("/api/user/me")
 def get_user_profile(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+    with get_connection() as connection:
+        orders = connection.execute(
+            "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)
+        ).fetchall()
     return {
         "id": user["id"],
         "name": user["name"],
         "email": user["email"],
         "role": user["role"],
         "created_at": user["created_at"],
+        "orders": [dict(o) for o in orders]
     }
 
 
-@app.put("/api/customizations/{customization_id}")
-def update_customization(
-    customization_id: int,
-    customization: CustomizationUpdate,
-    user: sqlite3.Row = Depends(current_user),
-) -> dict[str, Any]:
-    if customization.accessory_type not in ACCESSORY_TYPES:
-        raise HTTPException(status_code=422, detail="Tipo de accesorio no válido.")
-    if customization.pet_type not in PET_TYPES:
-        raise HTTPException(status_code=422, detail="Tipo de mascota no válido.")
-    if customization.color not in COLORS:
-        raise HTTPException(status_code=422, detail="Color no disponible.")
-    if customization.size not in SIZES:
-        raise HTTPException(status_code=422, detail="Talla no disponible.")
-
-    with get_connection() as connection:
-        cursor = connection.execute(
-            """
-            UPDATE customizations
-            SET accessory_type = ?, pet_name = ?, pet_type = ?, color = ?, size = ?, engraving = ?
-            WHERE id = ? AND user_id = ?
-            """,
-            (
-                customization.accessory_type,
-                customization.pet_name.strip(),
-                customization.pet_type,
-                customization.color,
-                customization.size,
-                customization.engraving.strip(),
-                customization_id,
-                user["id"],
-            ),
-        )
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Diseño no encontrado en tu carrito.")
-
-        updated = connection.execute(
-            "SELECT * FROM customizations WHERE id = ?", (customization_id,)
-        ).fetchone()
-
-    return {"message": "¡Diseño actualizado exitosamente!", "customization": dict(updated)}
+@app.post("/api/coupons/validate")
+def validate_coupon(data: dict[str, str]) -> dict[str, Any]:
+    code = data.get("code", "").strip().upper()
+    if code in COUPONS:
+        return {"valid": True, "discount_percentage": COUPONS[code], "message": f"¡Cupón '{code}' aplicado con éxito ({COUPONS[code]}% OFF)!"}
+    raise HTTPException(status_code=400, detail="Cupón de descuento no válido o expirado.")
 
 
 @app.post("/api/orders", status_code=status.HTTP_201_CREATED)
@@ -504,7 +494,6 @@ def create_order(
                 status_code=400, detail="No puedes procesar una orden con el carrito vacío."
             )
 
-        # Descontar inventario por cada ítem comprado
         for item in cart_items:
             prod_name = item["accessory_type"]
             connection.execute(
@@ -514,10 +503,10 @@ def create_order(
 
         cursor = connection.execute(
             """
-            INSERT INTO orders (user_id, payment_method, total_amount)
-            VALUES (?, ?, ?)
+            INSERT INTO orders (user_id, payment_method, total_amount, coupon_applied)
+            VALUES (?, ?, ?, ?)
             """,
-            (user["id"], order_data.payment_method, order_data.total_amount),
+            (user["id"], order_data.payment_method, order_data.total_amount, order_data.coupon_code),
         )
         order_id = cursor.lastrowid
         connection.execute("DELETE FROM customizations WHERE user_id = ?", (user["id"],))
@@ -590,37 +579,39 @@ def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
 
 
 @app.get("/api/admin/metrics")
-def get_admin_metrics(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
     with get_connection() as conn:
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
         total_revenue = conn.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders").fetchone()[0]
         
-        # Ventas diarias (agrupadas por fecha)
-        daily_sales = conn.execute("""
+        date_filter_sql = ""
+        now = datetime.now()
+        if filter_period == "today":
+            date_filter_sql = f"WHERE DATE(created_at) = '{now.strftime('%Y-%m-%d')}'"
+        elif filter_period == "week":
+            week_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+            date_filter_sql = f"WHERE DATE(created_at) >= '{week_ago}'"
+        elif filter_period == "month":
+            month_ago = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+            date_filter_sql = f"WHERE DATE(created_at) >= '{month_ago}'"
+
+        daily_sales = conn.execute(f"""
             SELECT DATE(created_at) as sale_date, COUNT(*) as orders_count, SUM(total_amount) as daily_revenue
-            FROM orders GROUP BY DATE(created_at) ORDER BY sale_date DESC LIMIT 10
+            FROM orders {date_filter_sql} GROUP BY DATE(created_at) ORDER BY sale_date DESC
         """).fetchall()
 
-        # Estadísticas de productos más vendidos
-        top_products = conn.execute("""
-            SELECT c.accessory_type as product_name, COUNT(*) as total_sold
-            FROM customizations c JOIN orders o ON c.user_id = o.user_id GROUP BY c.accessory_type ORDER BY total_sold DESC
+        top_products = conn.execute(f"""
+            SELECT accessory_type as product_name, COUNT(*) as total_sold
+            FROM customizations GROUP BY accessory_type ORDER BY total_sold DESC
         """).fetchall()
-        # Si no hay suficiente data de customizations en orders, respaldar con inventario o registros
-        if not top_products:
-            top_products = conn.execute("""
-                SELECT accessory_type as product_name, COUNT(*) as total_sold
-                FROM customizations GROUP BY accessory_type ORDER BY total_sold DESC
-            """).fetchall()
 
-        recent_orders = conn.execute("""
+        recent_orders = conn.execute(f"""
             SELECT o.id, u.name as user_name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
-            FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC
+            FROM orders o JOIN users u ON o.user_id = u.id {date_filter_sql.replace('created_at', 'o.created_at')} ORDER BY o.created_at DESC
         """).fetchall()
         
         all_users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
-        
         inventory_rows = conn.execute("SELECT * FROM inventory").fetchall()
 
     return {
@@ -834,7 +825,7 @@ HOME_PAGE = """
     .cart-btn-nav { position: relative; border-radius: 50px; background: #ffffff; border: 1px solid #ebdcd5; padding: 6px 16px; cursor: pointer; transition: all 0.2s ease; }
     .cart-btn-nav:hover { background: #fdfbf7; border-color: var(--gold); }
     .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--gold-dark); color: #fff; font-size: 0.7rem; font-weight: 700; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-    .sidebar-img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; }
+    .catalog-grid-img { width: 100%; height: 140px; object-fit: cover; border-radius: 12px; }
   </style>
 </head>
 <body>
@@ -883,22 +874,25 @@ HOME_PAGE = """
         </div>
       </div>
 
-      <div class="mb-4">
-        <button class="btn btn-outline-dark w-100 rounded-pill d-flex align-items-center justify-content-center gap-2 py-2" onclick="openCartModal()" data-bs-dismiss="offcanvas">
-          <span>🛒 Mi Carrito de Compras</span>
-          <span class="badge bg-warning text-dark rounded-pill" id="sbCartCount">0</span>
-        </button>
-      </div>
+      <!-- Nota: Se removió el botón del carrito del menú desplegable como se solicitó -->
 
-      <h6 class="fw-bold text-uppercase small text-muted mb-3">Catálogo Ampliado & Ofertas</h6>
-      <div class="row g-2 mb-4" id="sidebarCatalogGrid">
-        <div class="col-6">
-          <img src="/static/Coleccion Velvet Gold.jpg" class="sidebar-img" alt="Collares Luxe">
-          <span class="d-block small fw-semibold text-center mt-1">Collares Luxe</span>
+      <h6 class="fw-bold text-uppercase small text-muted mb-3">Catálogo de Productos & Imágenes</h6>
+      <div class="row g-2 mb-4" id="sidebarCatalogImages">
+        <div class="col-6 text-center">
+          <img src="/static/Coleccion Velvet Gold.jpg" class="catalog-grid-img" alt="Collar de Cuero">
+          <span class="d-block small fw-semibold mt-1">Collares Luxe</span>
         </div>
-        <div class="col-6">
-          <img src="/static/Placas Confort 3D.jpg" class="sidebar-img" alt="Placas Láser">
-          <span class="d-block small fw-semibold text-center mt-1">Placas Láser</span>
+        <div class="col-6 text-center">
+          <img src="/static/Placas Confort 3D.jpg" class="catalog-grid-img" alt="Placa Grabada">
+          <span class="d-block small fw-semibold mt-1">Placas 3D</span>
+        </div>
+        <div class="col-6 text-center mt-2">
+          <img src="/static/Arnes Ergonomico.jpg" class="catalog-grid-img" alt="Arnés Confort">
+          <span class="d-block small fw-semibold mt-1">Arneses Soft</span>
+        </div>
+        <div class="col-6 text-center mt-2">
+          <img src="/static/Logo dorado.jpg" class="catalog-grid-img" alt="Moño de Gala">
+          <span class="d-block small fw-semibold mt-1">Moños & Bandanas</span>
         </div>
       </div>
 
@@ -932,7 +926,7 @@ HOME_PAGE = """
           <div class="text-center mb-3">
             <img src="/static/Logo principal.jpg" alt="LuxPet Logo Principal" style="height: 60px;" class="mb-2 rounded shadow-sm">
             <h2 class="h4 brand-font fw-bold mt-1 mb-0">Bienvenido a la Boutique</h2>
-            <p class="text-muted small">Ingresa tus datos para continuar.</p>
+            <p class="text-muted small">Ingresa tus datos o regístrate.</p>
           </div>
 
           <div class="btn-group w-100 mb-3" role="group">
@@ -1025,6 +1019,20 @@ HOME_PAGE = """
   </header>
 
   <main class="container py-5">
+    
+    <!-- Sección de Catálogo Visual con Imágenes -->
+    <section class="mb-5">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h2 class="h4 mb-1">Catálogo Exclusivo LuxPet</h2>
+          <p class="text-muted small mb-0">Nuestros productos estelares disponibles para personalizar.</p>
+        </div>
+      </div>
+      <div class="row g-4" id="clientCatalogCards">
+        <!-- Rellenado dinámicamente por JS -->
+      </div>
+    </section>
+
     <section id="designer" class="mb-5">
       <div class="card card-custom p-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -1038,7 +1046,7 @@ HOME_PAGE = """
         <form id="designForm">
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label fw-semibold small">Tipo de accesorio (Ampliado)</label>
+              <label class="form-label fw-semibold small">Tipo de accesorio</label>
               <select id="accessory_type" class="form-select" required onchange="updatePreview()"><option value="">Seleccionar...</option></select>
             </div>
             <div class="col-md-6">
@@ -1074,26 +1082,37 @@ HOME_PAGE = """
     <section id="checkout" class="pt-4 border-top mb-5">
       <div class="card card-custom p-4">
         <div class="text-center mb-4">
-          <h2 class="h3 fw-bold">Método de Pago</h2>
-          <p class="text-muted small">Selecciona tu plataforma preferida para completar tu pedido.</p>
+          <h2 class="h3 fw-bold">Método de Pago & Cupones</h2>
+          <p class="text-muted small">Aplica cupones de descuento y selecciona tu método de pago preferido.</p>
+        </div>
+
+        <!-- Sección de Cupón -->
+        <div class="row justify-content-center mb-4">
+          <div class="col-md-6">
+            <div class="input-group">
+              <input type="text" id="couponInput" class="form-control" placeholder="Código de cupón (Ej. LUXPET10, WELCOME)">
+              <button class="btn btn-outline-dark" type="button" onclick="applyCoupon()">Aplicar Cupón</button>
+            </div>
+            <small id="couponFeedback" class="text-success fw-semibold d-block mt-1"></small>
+          </div>
         </div>
 
         <div class="row g-3 mb-4">
-          <div class="col-md-3">
+          <div class="col-md-4">
             <div class="pay-card text-center" onclick="selectPay(this, 'Tarjeta de Crédito')">
               <div class="fs-2 mb-2">💳</div>
               <strong class="d-block mb-1">Tarjeta de Crédito</strong>
               <span class="text-muted small">Visa / Mastercard</span>
             </div>
           </div>
-          <div class="col-md-3">
+          <div class="col-md-4">
             <div class="pay-card text-center" onclick="selectPay(this, 'PayPal')">
               <div class="fs-2 mb-2">🅿️</div>
               <strong class="d-block mb-1">PayPal</strong>
               <span class="text-muted small">Pago rápido</span>
             </div>
           </div>
-          <div class="col-md-3">
+          <div class="col-md-4">
             <div class="pay-card text-center" onclick="selectPay(this, 'Transferencia QR')">
               <div class="fs-2 mb-2">📱</div>
               <strong class="d-block mb-1">Transferencia QR</strong>
@@ -1103,7 +1122,7 @@ HOME_PAGE = """
         </div>
 
         <div class="mt-4 p-4 bg-light rounded-4 text-center border">
-          <p class="mb-2 text-muted small">Monto Total: <strong class="text-dark fs-4" id="checkoutTotalAmount">$0 COP</strong> <span class="text-muted">(IVA y Descuentos del día incluidos)</span></p>
+          <p class="mb-2 text-muted small">Monto Total Final: <strong class="text-dark fs-4" id="checkoutTotalAmount">$0 COP</strong> <span class="text-muted">(IVA y Descuentos incluidos)</span></p>
           <button class="btn btn-dark btn-lg px-5 rounded-pill mt-2" onclick="openSelectedPaymentModal()">Completar Orden de Compra 🛍️</button>
         </div>
       </div>
@@ -1119,6 +1138,7 @@ HOME_PAGE = """
   </footer>
 </div>
 
+<!-- Modal Carrito -->
 <div class="modal fade" id="cartModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content rounded-4 border-0 p-3">
@@ -1143,6 +1163,24 @@ HOME_PAGE = """
   </div>
 </div>
 
+<!-- Modal Historial de Compras del Cliente -->
+<div class="modal fade" id="clientHistoryModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content rounded-4 border-0 p-4">
+      <div class="modal-header border-bottom">
+        <h5 class="modal-title brand-font fw-bold">📦 Mi Historial de Pedidos</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body py-4" id="clientHistoryContainer">
+        <p class="text-muted text-center">Cargando tus compras...</p>
+      </div>
+      <div class="modal-footer border-top-0">
+        <button type="button" class="btn btn-secondary rounded-pill" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="paymentDataModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content rounded-4 border-0 p-4">
@@ -1160,9 +1198,11 @@ HOME_PAGE = """
 </div>
 
 <script>
-let token = localStorage.getItem('luxpet_token'), mode = 'login', colorMap = {}, prices = {}, discounts = {}, inventory = {}, petImages = {}, currentUser = null;
+let token = localStorage.getItem('luxpet_token'), mode = 'login', colorMap = {}, prices = {}, discounts = {}, inventory = {}, productImages = {}, petImages = {}, currentUser = null;
 let selectedMethod = 'Tarjeta de Crédito';
 let userCartItems = [];
+let appliedCouponCode = null;
+let couponDiscountPct = 0;
 const $ = id => document.getElementById(id);
 
 function mostrarMetodoPago(scroll = true) {
@@ -1177,7 +1217,7 @@ function notify(message, good=false) {
   const alertEl = $('alert');
   if (alertEl) {
     alertEl.innerHTML = `<div class="alert ${good?'alert-success':'alert-danger'} shadow-lg border-0 rounded-4 px-4 py-3">${message}</div>`; 
-    setTimeout(()=> alertEl.innerHTML='', 3500); 
+    setTimeout(()=> alertEl.innerHTML='', 4000); 
   }
 }
 
@@ -1219,6 +1259,24 @@ function renderPaymentForm() {
   }
 }
 
+async function applyCoupon() {
+  const code = $('couponInput')?.value.trim();
+  if (!code) return notify('Ingresa un código de cupón.');
+  try {
+    const res = await api('/api/coupons/validate', {
+      method: 'POST',
+      body: JSON.stringify({ code })
+    });
+    couponDiscountPct = res.discount_percentage;
+    appliedCouponCode = code;
+    if ($('couponFeedback'))$('couponFeedback').textContent = res.message;
+    notify(res.message, true);
+    if ($('checkoutTotalAmount'))$('checkoutTotalAmount').textContent = formatCOP(calculateCartTotal());
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
 async function processMockPayment() {
   if (!token) return notify('Por favor inicia sesión primero.');
   if (userCartItems.length === 0) return notify('El carrito está vacío.');
@@ -1230,9 +1288,11 @@ async function processMockPayment() {
   try {
     await api('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ payment_method: selectedMethod, total_amount: totalAmount })
+      body: JSON.stringify({ payment_method: selectedMethod, total_amount: totalAmount, coupon_code: appliedCouponCode })
     });
     notify(`🎉 ¡Pago de ${formatCOP(totalAmount)} registrado con éxito!`, true);
+    appliedCouponCode = null;
+    couponDiscountPct = 0;
     await loadDesigns();
   } catch (err) {
     notify(err.message);
@@ -1289,17 +1349,24 @@ function updatePreview() {
 
 function filterCatalogHome(query) {
   const q = query.toLowerCase();
-  const selectAcc = $('accessory_type');
-  if (!selectAcc) return;
   
-  // Filtrar o resaltar opciones en el selector de tipo de accesorio
-  const options = selectAcc.options;
-  for (let i = 0; i < options.length; i++) {
-    const text = options[i].text.toLowerCase();
-    if (text.includes(q) || q === '') {
-      options[i].style.display = '';
-    } else {
-      options[i].style.display = 'none';
+  // Filtrar selector de accesorios
+  const selectAcc = $('accessory_type');
+  if (selectAcc) {
+    const options = selectAcc.options;
+    for (let i = 0; i < options.length; i++) {
+      const text = options[i].text.toLowerCase();
+      options[i].style.display = text.includes(q) || q === '' ? '' : 'none';
+    }
+  }
+
+  // Filtrar tarjetas visuales de catálogo de cliente
+  const cardsContainer = $('clientCatalogCards');
+  if (cardsContainer) {
+    const cards = cardsContainer.getElementsByClassName('client-catalog-item');
+    for (let card of cards) {
+      const title = card.getAttribute('data-name').toLowerCase();
+      card.style.display = title.includes(q) || q === '' ? '' : 'none';
     }
   }
 }
@@ -1311,6 +1378,7 @@ async function loadCatalog() {
     prices = data.prices || {};
     discounts = data.discounts || {};
     inventory = data.inventory || {};
+    productImages = data.product_images || {};
     petImages = data.pet_images || {};
     
     [['accessory_type', data.accessory_types], ['pet_type', data.pet_types], ['color', data.colors], ['size', data.sizes]].forEach(([id, items]) => {
@@ -1326,8 +1394,49 @@ async function loadCatalog() {
         });
       }
     });
+
+    // Renderizar catálogo con imágenes en la página de cliente
+    const cardsContainer = $('clientCatalogCards');
+    if (cardsContainer && data.accessory_types) {
+      cardsContainer.innerHTML = data.accessory_types.map(acc => {
+        const img = productImages[acc] || '/static/Logo principal.jpg';
+        const baseP = prices[acc] || 45000;
+        const disc = discounts[acc] || 0;
+        const finalP = getFinalProductPrice(acc);
+        const stockInfo = inventory[acc] ? inventory[acc].stock : 20;
+
+        return `
+          <div class="col-md-4 client-catalog-item" data-name="${acc}">
+            <div class="card card-custom p-3 h-100 shadow-sm">
+              <img src="${img}" class="rounded-4 mb-3" style="height: 180px; object-fit: cover;" alt="${acc}">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="fw-bold mb-0">${acc}</h5>
+                ${disc > 0 ? `<span class="badge bg-danger">${disc}% OFF</span>` : '<span class="badge bg-success">Disponible</span>'}
+              </div>
+              <p class="text-muted small mb-2">Accesorio de lujo hecho a mano con los mejores estándares.</p>
+              <div class="d-flex justify-content-between align-items-center mt-auto pt-2 border-top">
+                <div>
+                  ${disc > 0 ? `<small class="text-decoration-line-through text-muted d-block">${formatCOP(baseP)}</small>` : ''}
+                  <strong class="text-dark fs-5">${formatCOP(finalP)}</strong>
+                </div>
+                <button class="btn btn-outline-dark btn-sm rounded-pill" onclick="selectAccessoryFromCatalog('${acc}')">Diseñar ✨</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
   } catch (err) {
     console.error("Error catálogo:", err);
+  }
+}
+
+function selectAccessoryFromCatalog(accName) {
+  const sel = $('accessory_type');
+  if (sel) {
+    sel.value = accName;
+    updatePreview();
+    $('designer').scrollIntoView({ behavior: 'smooth' });
   }
 }
 
@@ -1370,7 +1479,6 @@ function logout() {
 function showDashboard() {
   if ($('loginScreen'))$('loginScreen').classList.add('d-none');
   
-  // REQUISITO: Si el usuario es administrador, NO mostrar la vista de cliente para comprar, solo administrar
   if (currentUser && (currentUser.email === 'julianjuanm@gmail.com' || currentUser.role === 'admin')) {
     if ($('mainContent'))$('mainContent').classList.add('d-none');
     if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
@@ -1385,11 +1493,11 @@ function showDashboard() {
     return;
   }
 
-  // Vista de Cliente Normal
   if ($('mainContent'))$('mainContent').classList.remove('d-none');
   if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
 
   if ($('userNavStatus')) {$('userNavStatus').innerHTML = `
+      <button class="btn btn-sm btn-outline-secondary rounded-pill me-2" onclick="openClientHistoryModal()">📦 Mis Pedidos</button>
       <div class="cart-btn-nav" onclick="openCartModal()">
         🛒 <span class="d-none d-md-inline fw-semibold ms-1">Carrito</span>
         <span class="cart-badge" id="navCartCount">${userCartItems.length}</span>
@@ -1436,7 +1544,11 @@ async function removeFromCart(itemId) {
 }
 
 function calculateCartTotal() {
-  return userCartItems.reduce((acc, item) => acc + getFinalProductPrice(item.accessory_type), 0);
+  const subtotal = userCartItems.reduce((acc, item) => acc + getFinalProductPrice(item.accessory_type), 0);
+  if (couponDiscountPct > 0) {
+    return subtotal * (1 - couponDiscountPct / 100);
+  }
+  return subtotal;
 }
 
 function formatCOP(amount) {
@@ -1460,6 +1572,42 @@ function openCartModal() {
   if (cartModalEl) (bootstrap.Modal.getInstance(cartModalEl) || new bootstrap.Modal(cartModalEl)).show();
 }
 
+async function openClientHistoryModal() {
+  const container = $('clientHistoryContainer');
+  if (!container) return;
+  container.innerHTML = '<p class="text-center py-3 text-muted">Cargando tus pedidos...</p>';
+  const modalEl = $('clientHistoryModal');
+  if (modalEl) (bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl)).show();
+
+  try {
+    const profile = await api('/api/user/me');
+    const orders = profile.orders || [];
+    container.innerHTML = orders.length === 0 ? '<p class="text-center py-4 text-muted">Aún no tienes compras registradas.</p>' :
+      `
+      <div class="table-responsive">
+        <table class="table table-hover align-middle small">
+          <thead class="table-dark">
+            <tr><th>ID</th><th>Pago</th><th>Total</th><th>Estado</th><th>Fecha</th></tr>
+          </thead>
+          <tbody>
+            ${orders.map(o => `
+              <tr>
+                <td>#${o.id}</td>
+                <td>${o.payment_method}</td>
+                <td><strong>${formatCOP(o.total_amount)}</strong></td>
+                <td><span class="badge bg-success">${o.status}</span></td>
+                <td>${o.created_at}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      `;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger text-center">Error al cargar historial: ${err.message}</p>`;
+  }
+}
+
 function goToCheckout() {
   const modalEl = $('cartModal');
   if (modalEl) (bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl)).hide();
@@ -1471,7 +1619,6 @@ async function loadDesigns() {
   try { 
     userCartItems = await api('/api/customizations'); 
     if ($('navCartCount'))$('navCartCount').textContent = userCartItems.length;
-    if ($('sbCartCount'))$('sbCartCount').textContent = userCartItems.length;
     if ($('checkoutTotalAmount'))$('checkoutTotalAmount').textContent = formatCOP(calculateCartTotal());
   } catch (err) { 
     localStorage.removeItem('luxpet_token'); 
@@ -1500,14 +1647,14 @@ async function loadDesigns() {
 ADMIN_SCRIPT_EXTENSION = """
 <script>
 (function() {
-  window.refreshAdminDashboard = async function() {
+  window.refreshAdminDashboard = async function(period = 'all') {
     notify('Sincronizando registros nuevos e inventario...', true);
-    await renderAdminDashboard();
+    await renderAdminDashboard(period);
   };
 
-  window.renderAdminDashboard = async function() {
+  window.renderAdminDashboard = async function(period = 'all') {
     try {
-      const data = await api('/api/admin/metrics');
+      const data = await api(`/api/admin/metrics?filter_period=${period}`);
       let adminSection = document.getElementById('adminSection');
       if (!adminSection) {
         adminSection = document.createElement('section');
@@ -1516,7 +1663,6 @@ ADMIN_SCRIPT_EXTENSION = """
         document.body.appendChild(adminSection);
       }
 
-      // Comprobar alertas de inventario bajo o agotado
       let stockAlertsHTML = '';
       if (data.inventory && data.inventory.length > 0) {
         const lowStockItems = data.inventory.filter(i => i.stock <= i.min_threshold);
@@ -1535,14 +1681,20 @@ ADMIN_SCRIPT_EXTENSION = """
 
       adminSection.innerHTML = `
         <div class="card card-custom p-4 border-warning mb-4 shadow-sm" style="background: #fffdf9;">
-          <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <div>
               <span class="badge bg-warning text-dark px-3 py-2 rounded-pill fw-bold">PANEL PRINCIPAL DE ADMINISTRACIÓN EXCLUSIVO</span>
               <h2 class="h3 fw-bold mt-2">Bienvenido, Juan Manuel 👑</h2>
             </div>
-            <div class="d-flex gap-2">
-              <button onclick="refreshAdminDashboard()" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Actualizar Registros</button>
-              <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Ventas CSV</button>
+            <div class="d-flex gap-2 flex-wrap">
+              <select class="form-select form-select-sm" style="width: auto;" onchange="renderAdminDashboard(this.value)">
+                <option value="all" ${period==='all'?'selected':''}>📅 Todo el tiempo</option>
+                <option value="today" ${period==='today'?'selected':''}>📅 Hoy</option>
+                <option value="week" ${period==='week'?'selected':''}>📅 Última semana</option>
+                <option value="month" ${period==='month'?'selected':''}>📅 Último mes</option>
+              </select>
+              <button onclick="refreshAdminDashboard('${period}')" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Actualizar</button>
+              <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar CSV</button>
             </div>
           </div>
 
@@ -1617,13 +1769,13 @@ ADMIN_SCRIPT_EXTENSION = """
                         </td>
                         <td>${o.created_at}</td>
                       </tr>
-                    `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas aún.</td></tr>'}
+                    `).join('') : '<tr><td colspan="6" class="text-center py-3 text-muted">No hay órdenes registradas para este periodo.</td></tr>'}
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <!-- Ventas Diarias & Estadísticas de productos -->
+            <!-- Ventas Diarias & Estadísticas -->
             <div class="tab-pane fade" id="tab-sales">
               <div class="row g-4">
                 <div class="col-md-6">
@@ -1640,7 +1792,7 @@ ADMIN_SCRIPT_EXTENSION = """
                             <td>${ds.orders_count}</td>
                             <td><strong>${formatCOP(ds.daily_revenue)}</strong></td>
                           </tr>
-                        `).join('') : '<tr><td colspan="3" class="text-center text-muted">Sin ventas diarias aún.</td></tr>'}
+                        `).join('') : '<tr><td colspan="3" class="text-center text-muted">Sin ventas registradas.</td></tr>'}
                       </tbody>
                     </table>
                   </div>
