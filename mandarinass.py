@@ -62,13 +62,13 @@ PET_IMAGES = {
 }
 
 PRODUCT_IMAGES = {
-    "Placa Grabada": "/static/Placas Confort 3D.jpg",
-    "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
-    "Arnés Confort": "/static/Arnes Ergonomico.jpg",
-    "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
-    "Bandana de Seda": "/static/Bandana de Seda.jpg",
-    "Moño de Gala": "/static/Moño de Gala.jpg",
-    "Cama Oropel": "/static/Cama Oropel.jpg"
+    "Placa Grabada": "/static/Placas%20Confort%203D.jpg",
+    "Collar de Cuero": "/static/Coleccion%20Velvet%20Gold.jpg",
+    "Arnés Confort": "/static/Arnes%20Ergonomico.jpg",
+    "Correa Elegance 3m": "/static/Coleccion%20Velvet%20Gold.jpg",
+    "Bandana de Seda": "/static/Bandana%20de%20Seda.jpg",
+    "Moño de Gala": "/static/Mo%C3%B1o%20de%20Gala.jpg",
+    "Cama Oropel": "/static/Cama%20Oropel.jpg"
 }
 
 COLOR_MAP = {
