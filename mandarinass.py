@@ -66,9 +66,9 @@ PRODUCT_IMAGES = {
     "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
     "Arnés Confort": "/static/Arnes Ergonomico.jpg",
     "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
-    "Bandana de Seda": "/static/Coleccion Velvet Gold.jpg",
-    "Moño de Gala": "/static/Logo dorado.jpg",
-    "Cama Oropel": "/static/Arnes Ergonomico.jpg"
+    "Bandana de Seda": "/static/Bandana de Seda.jpg",
+    "Moño de Gala": "/static/Moño de Gala.jpg",
+    "Cama Oropel": "/static/Cama Oropel.jpg"
 }
 
 COLOR_MAP = {
