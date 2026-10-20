@@ -745,6 +745,26 @@ def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingR
     )
 
 
+@app.get("/api/admin/export/users")
+def export_users_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingResponse:
+    with get_connection() as conn:
+        users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID Usuario", "Nombre Completo", "Correo Electrónico (Email)", "Rol", "Fecha Registro"])
+
+    for u in users:
+        writer.writerow([u["id"], u["name"], u["email"], u["role"], u["created_at"]])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=luxpet_clientes_correos.csv"}
+    )
+
+
 # ==============================================================================
 # ENDPOINT DE HEALTH CHECK (PARA MANTENER ACTIVO EL SERVIDOR EN RENDER)
 # ==============================================================================
@@ -1831,6 +1851,7 @@ ADMIN_SCRIPT_EXTENSION = """
               </select>
               <button onclick="refreshAdminDashboard('${period}')" class="btn btn-outline-warning rounded-pill btn-sm fw-bold">🔄 Sincronizar</button>
               <button onclick="downloadCSVReport()" class="btn btn-outline-dark rounded-pill btn-sm fw-bold">📥 Exportar Reporte CSV</button>
+              <button onclick="downloadUsersCSV()" class="btn btn-gold rounded-pill btn-sm fw-bold">📧 Descargar Correos (CSV)</button>
             </div>
           </div>
 
@@ -1839,7 +1860,7 @@ ADMIN_SCRIPT_EXTENSION = """
           <div class="row g-3 mb-4 text-center">
             <div class="col-md-4">
               <div class="p-3 bg-white rounded-4 border shadow-sm">
-                <small class="text-muted d-block uppercase fw-bold">Clientes Registrados</small>
+                <small class="text-muted d-block uppercase fw-bold">Clientes Registrados (Correos Guardados)</small>
                 <strong class="fs-2 text-dark">${data.metrics.users_count}</strong>
               </div>
             </div>
@@ -1868,7 +1889,7 @@ ADMIN_SCRIPT_EXTENSION = """
               <button class="nav-link rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-inventory" type="button">Control de Inventario & Bodega</button>
             </li>
             <li class="nav-item">
-              <button class="nav-link rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-users" type="button">Gestión de Usuarios</button>
+              <button class="nav-link rounded-pill px-4" data-bs-toggle="pill" data-bs-target="#tab-users" type="button">Gestión de Usuarios & Correos Guardados</button>
             </li>
           </ul>
 
@@ -1983,15 +2004,19 @@ ADMIN_SCRIPT_EXTENSION = """
               </div>
             </div>
 
-            <!-- Usuarios -->
+            <!-- Usuarios & Correos Guardados -->
             <div class="tab-pane fade" id="tab-users">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold mb-0">👥 Lista de Correos Registrados en la Base de Datos</h5>
+                <button onclick="downloadUsersCSV()" class="btn btn-sm btn-gold rounded-pill fw-bold">📥 Descargar Correos en Excel/CSV</button>
+              </div>
               <div class="table-responsive">
                 <table class="table table-hover align-middle small">
                   <thead class="table-dark">
                     <tr>
                       <th>ID</th>
                       <th>Nombre</th>
-                      <th>Correo Electrónico</th>
+                      <th>Correo Electrónico (Email)</th>
                       <th>Rol</th>
                       <th>Fecha Registro</th>
                       <th>Acción</th>
@@ -2002,7 +2027,7 @@ ADMIN_SCRIPT_EXTENSION = """
                       <tr>
                         <td>#${u.id}</td>
                         <td><strong>${u.name}</strong></td>
-                        <td>${u.email}</td>
+                        <td><span class="badge bg-light text-dark border font-monospace fs-6">${u.email}</span></td>
                         <td><span class="badge ${u.role==='admin'?'bg-danger':'bg-secondary'}">${u.role}</span></td>
                         <td>${u.created_at}</td>
                         <td>
@@ -2064,6 +2089,10 @@ ADMIN_SCRIPT_EXTENSION = """
 
   window.downloadCSVReport = function() {
     window.open(`/api/admin/export/orders?token=${token}`, '_blank');
+  };
+
+  window.downloadUsersCSV = function() {
+    window.open(`/api/admin/export/users?token=${token}`, '_blank');
   };
 })();
 </script>
