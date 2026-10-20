@@ -746,6 +746,14 @@ def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingR
 
 
 # ==============================================================================
+# ENDPOINT DE HEALTH CHECK (PARA MANTENER ACTIVO EL SERVIDOR EN RENDER)
+# ==============================================================================
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok"}
+
+
+# ==============================================================================
 # VISTA FRONTEND PRINCIPAL Y PANEL JS
 # ==============================================================================
 
