@@ -768,9 +768,9 @@ def export_users_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingRe
 # ==============================================================================
 # ENDPOINT DE HEALTH CHECK (PARA MANTENER ACTIVO EL SERVIDOR EN RENDER)
 # ==============================================================================
-@app.get("/api/health", response_class=PlainTextResponse)
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health_check():
-   return "OK"
+    return "OK"
 
 
 # ==============================================================================
