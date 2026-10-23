@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -768,9 +768,9 @@ def export_users_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingRe
 # ==============================================================================
 # ENDPOINT DE HEALTH CHECK (PARA MANTENER ACTIVO EL SERVIDOR EN RENDER)
 # ==============================================================================
-@app.get("/api/health")
+@app.get("/api/health", response_class=PlainTextResponse)
 def health_check():
-    return {"status": "ok"}
+   return "OK"
 
 
 # ==============================================================================
