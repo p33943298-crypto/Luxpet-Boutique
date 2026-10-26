@@ -357,12 +357,12 @@ def register(user: UserRegister) -> dict[str, Any]:
             user_id = cursor.lastrowid
             token = encode_token(user_id)
             connection.execute("UPDATE users SET active_session_token = ? WHERE id = ?", (token, user_id))
-            connection.commit()
+            connection.commit()  # <-- Fuerza el almacenamiento permanente en el archivo luxpet.db
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="El correo ya está registrado en el sistema.")
 
     return {
-        "message": "¡Cuenta creada exitosamente!",
+        "message": "¡Cuenta creada exitosamente y guardada en el sistema!",
         "access_token": token,
         "token_type": "bearer",
         "user": {"id": user_id, "name": user.name.strip(), "email": user.email.lower(), "role": "client"},
