@@ -357,7 +357,7 @@ def register(user: UserRegister) -> dict[str, Any]:
             user_id = cursor.lastrowid
             token = encode_token(user_id)
             connection.execute("UPDATE users SET active_session_token = ? WHERE id = ?", (token, user_id))
-            connection.commit()  # <-- Fuerza el almacenamiento permanente en el archivo luxpet.db
+            connection.commit()
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="El correo ya está registrado en el sistema.")
 
@@ -1065,7 +1065,7 @@ HOME_PAGE = """
   <header class="hero">
     <div class="container">
       <div class="row align-items-center g-4">
-        <div class="col-lg-6">
+        <div class="col-12 text-center">
           <div class="dog-container" title="¡Hazme un mimito!" onclick="barkDog()">
             <svg viewBox="0 0 100 100">
               <path class="dog-tail" d="M 15 75 Q 5 60 18 50" stroke="#c48b57" stroke-width="7" stroke-linecap="round" fill="none"/>
@@ -1083,40 +1083,13 @@ HOME_PAGE = """
             </svg>
           </div>
 
-          <span class="text-uppercase small fw-bold tracking-wider d-block text-center text-lg-start mt-2" style="color:var(--gold-dark); letter-spacing: 2px;">Hecho a mano en Italia & Colombia</span>
-          <h1 class="display-5 fw-bold mt-2 mb-3 text-center text-lg-start">Elegancia y ternura para tu mejor amigo.</h1>
-          <p class="lead text-secondary mb-4 text-center text-lg-start">Diseña placas, collares, arneses y camas de alta gama con grabado láser en tiempo real y descuentos especiales.</p>
+          <span class="text-uppercase small fw-bold tracking-wider d-block text-center mt-2" style="color:var(--gold-dark); letter-spacing: 2px;">Hecho a mano en Italia & Colombia</span>
+          <h1 class="display-5 fw-bold mt-2 mb-3 text-center">Elegancia y ternura para tu mejor amigo.</h1>
+          <p class="lead text-secondary mb-4 text-center">Diseña placas, collares, arneses y camas de alta gama con grabado láser en tiempo real y descuentos especiales.</p>
           
-          <div class="d-flex gap-3 justify-content-center justify-content-lg-start">
+          <div class="d-flex gap-3 justify-content-center mb-2">
             <a href="#designer" class="btn btn-gold btn-lg">Diseñar Accesorio</a>
             <button onclick="mostrarMetodoPago(true)" class="btn btn-outline-dark rounded-pill btn-lg px-4">Métodos de Pago</button>
-          </div>
-        </div>
-
-        <div class="col-lg-6">
-          <div class="preview-card">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-              <span class="fw-bold text-uppercase small text-muted">Vista previa 3D en vivo</span>
-              <span class="badge bg-warning text-dark border" id="badgeDiscountPreview">¡Descuento del Día!</span>
-            </div>
-            <div class="preview-box">
-              <img id="prevPetImg" src="https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80" class="preview-pet-img" alt="Mascota">
-              
-              <div class="collar-strap" id="prevStrap">
-                <div class="collar-buckle"></div>
-                <div class="collar-tag" id="prevTag">
-                  <div class="tag-ring"></div>
-                  <span id="prevPetName">Mascota</span>
-                  <span id="prevEngraving" style="font-size:0.5rem; opacity:0.85;"></span>
-                </div>
-              </div>
-            </div>
-            <div class="row text-center mt-3 pt-2 border-top g-2">
-              <div class="col-3"><small class="text-muted d-block">Animal</small><strong id="lblPetType">Perro</strong></div>
-              <div class="col-3"><small class="text-muted d-block">Talla</small><strong id="lblSize">M</strong></div>
-              <div class="col-3"><small class="text-muted d-block">Color</small><strong id="lblColor">Rosa empolvado</strong></div>
-              <div class="col-3"><small class="text-muted d-block">Precio</small><strong id="lblPrice" class="text-success">$0</strong></div>
-            </div>
           </div>
         </div>
       </div>
@@ -1135,49 +1108,91 @@ HOME_PAGE = """
       <div class="row g-4" id="clientCatalogCards"></div>
     </section>
 
+    <!-- SECCIÓN DE PERSONALIZACIÓN Y VISTA PREVIA LADO A LADO -->
     <section id="designer" class="mb-5">
-      <div class="card card-custom p-4">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <div>
-            <h2 class="h4 mb-1">Personaliza tu accesorio</h2>
-            <p class="text-muted small mb-0">Selecciona el tipo de mascota, materiales, colores y grabado.</p>
+      <div class="row g-4 align-items-stretch">
+        
+        <!-- COLUMNA IZQUIERDA: FORMULARIO DE PERSONALIZACIÓN -->
+        <div class="col-lg-6 d-flex">
+          <div class="card card-custom p-4 w-100 d-flex flex-column justify-content-between">
+            <div>
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                  <h2 class="h4 mb-1">Personaliza tu accesorio</h2>
+                  <p class="text-muted small mb-0">Selecciona el tipo de mascota, materiales, colores y grabado.</p>
+                </div>
+                <span class="fs-2">💎</span>
+              </div>
+
+              <form id="designForm">
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold small">Tipo de accesorio</label>
+                    <select id="accessory_type" class="form-select" required onchange="updatePreview()"><option value="">Seleccionar...</option></select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold small">Tipo de mascota</label>
+                    <select id="pet_type" class="form-select" required><option value="">Seleccionar...</option></select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold small">Nombre de tu mascota</label>
+                    <input id="pet_name" class="form-control" placeholder="Ej. Bruno" required>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold small">Color del cuero/tela</label>
+                    <select id="color" class="form-select" required><option value="">Seleccionar...</option></select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-semibold small">Talla</label>
+                    <select id="size" class="form-select" required><option value="">Seleccionar...</option></select>
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label fw-semibold small">Teléfono o mensaje para grabado (opcional)</label>
+                    <input id="engraving" class="form-control" placeholder="Ej. 300 123 4567 / Vacunado">
+                  </div>
+                  <div class="col-12 pt-2">
+                    <button class="btn btn-gold btn-lg w-100">Agregar al Carrito de Compras ✨</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <div id="designs" class="mt-4"></div>
           </div>
-          <span class="fs-2">💎</span>
         </div>
 
-        <form id="designForm">
-          <div class="row g-3">
-            <div class="col-md-6">
-              <label class="form-label fw-semibold small">Tipo de accesorio</label>
-              <select id="accessory_type" class="form-select" required onchange="updatePreview()"><option value="">Seleccionar...</option></select>
+        <!-- COLUMNA DERECHA: VISTA PREVIA 3D EN VIVO -->
+        <div class="col-lg-6 d-flex">
+          <div class="preview-card w-100 d-flex flex-column justify-content-between">
+            <div>
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <span class="fw-bold text-uppercase small text-muted">VISTA PREVIA 3D EN VIVO</span>
+                <span class="badge bg-warning text-dark border" id="badgeDiscountPreview">¡Descuento del Día!</span>
+              </div>
+              
+              <div class="preview-box">
+                <img id="prevPetImg" src="https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=300&q=80" class="preview-pet-img" alt="Mascota">
+                
+                <div class="collar-strap" id="prevStrap">
+                  <div class="collar-buckle"></div>
+                  <div class="collar-tag" id="prevTag">
+                    <div class="tag-ring"></div>
+                    <span id="prevPetName">Mascota</span>
+                    <span id="prevEngraving" style="font-size:0.5rem; opacity:0.85;"></span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold small">Tipo de mascota</label>
-              <select id="pet_type" class="form-select" required><option value="">Seleccionar...</option></select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold small">Nombre de tu mascota</label>
-              <input id="pet_name" class="form-control" placeholder="Ej. Bruno" required>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold small">Color del cuero/tela</label>
-              <select id="color" class="form-select" required><option value="">Seleccionar...</option></select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold small">Talla</label>
-              <select id="size" class="form-select" required><option value="">Seleccionar...</option></select>
-            </div>
-            <div class="col-12">
-              <label class="form-label fw-semibold small">Teléfono o mensaje para grabado (opcional)</label>
-              <input id="engraving" class="form-control" placeholder="Ej. 300 123 4567 / Vacunado">
-            </div>
-            <div class="col-12 pt-2">
-              <button class="btn btn-gold btn-lg w-100">Agregar al Carrito de Compras ✨</button>
+
+            <div class="row text-center mt-3 pt-3 border-top g-2">
+              <div class="col-3"><small class="text-muted d-block">Animal</small><strong id="lblPetType">Perro</strong></div>
+              <div class="col-3"><small class="text-muted d-block">Talla</small><strong id="lblSize">M</strong></div>
+              <div class="col-3"><small class="text-muted d-block">Color</small><strong id="lblColor">Rosa empolvado</strong></div>
+              <div class="col-3"><small class="text-muted d-block">Precio</small><strong id="lblPrice" class="text-success">$0</strong></div>
             </div>
           </div>
-        </form>
+        </div>
 
-        <div id="designs" class="mt-4"></div>
       </div>
     </section>
 
@@ -1615,7 +1630,6 @@ function logout() {
 function showDashboard() {
   if ($('loginScreen'))$('loginScreen').classList.add('d-none');
   
-  // Mostrar la barra de búsqueda ahora que el usuario inició sesión
   if ($('clientSearchWrapper')) {
     $('clientSearchWrapper').classList.remove('d-none');$('clientSearchWrapper').classList.add('d-md-flex');
   }
