@@ -1054,7 +1054,7 @@ HOME_PAGE = """
         </div>
         <div class="col-md-3">
           <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <img src="/static/Logo dorado.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
+            <img src="/static/images.jpg" class="w-100" style="height: 160px; object-fit: cover;" alt="Accesorios">
             <div class="card-body p-2 text-center bg-light"><small class="fw-bold">Accesorios de Lujo</small></div>
           </div>
         </div>
