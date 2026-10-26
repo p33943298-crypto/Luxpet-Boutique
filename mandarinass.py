@@ -8,7 +8,6 @@ import json
 import os
 import re
 import secrets
-import sqlite3
 import time
 from datetime import datetime, timedelta
 from io import StringIO
@@ -16,15 +15,24 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse, StreamingResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+# Intentamos importar psycopg2 para PostgreSQL (Supabase), con respaldo opcional a sqlite3
+try:
+    import psycopg2
+    import psycopg2.extras
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
+    import sqlite3
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 DATABASE_PATH = APP_DIR / "luxpet.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 SECRET_KEY = os.getenv("LUXPET_SECRET_KEY", "luxpet-dev-secret-change-me")
 TOKEN_TTL_SECONDS = 60 * 60 * 24
 
@@ -157,57 +165,160 @@ class InventoryUpdate(BaseModel):
     stock: int
 
 
-def get_connection() -> sqlite3.Connection:
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+# Clase adaptadora para compatibilidad transparente entre SQLite y PostgreSQL (Supabase)
+class DBConnectionWrapper:
+    def __init__(self, conn, is_pg=False):
+        self.conn = conn
+        self.is_pg = is_pg
+        self.cursor_obj = conn.cursor()
+
+    def execute(self, query, params=()):
+        if self.is_pg:
+            query = query.replace("?", "%s")
+        self.cursor_obj.execute(query, params)
+        return self
+
+    def executescript(self, script):
+        self.cursor_obj.execute(script)
+        return self
+
+    def fetchone(self):
+        return self.cursor_obj.fetchone()
+
+    def fetchall(self):
+        return self.cursor_obj.fetchall()
+
+    def commit(self):
+        self.conn.commit()
+
+    @property
+    def lastrowid(self):
+        if self.is_pg:
+            self.cursor_obj.execute("SELECT LASTVAL()")
+            res = self.cursor_obj.fetchone()
+            return res[0] if res else None
+        else:
+            return self.cursor_obj.lastrowid
+
+    @property
+    def rowcount(self):
+        return self.cursor_obj.rowcount
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.conn.rollback()
+        else:
+            self.conn.commit()
+        self.cursor_obj.close()
+        self.conn.close()
+
+
+def get_connection():
+    if DATABASE_URL and POSTGRES_AVAILABLE:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
+        return DBConnectionWrapper(conn, is_pg=True)
+    else:
+        import sqlite3
+        conn = sqlite3.connect(DATABASE_PATH)
+        conn.row_factory = sqlite3.Row
+        return DBConnectionWrapper(conn, is_pg=False)
 
 
 def initialize_database() -> None:
     with get_connection() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'client',
-                active_session_token TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS customizations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                accessory_type TEXT NOT NULL,
-                pet_name TEXT NOT NULL,
-                pet_type TEXT NOT NULL DEFAULT 'Perro',
-                color TEXT NOT NULL,
-                size TEXT NOT NULL,
-                engraving TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                payment_method TEXT NOT NULL,
-                total_amount REAL NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Completado',
-                coupon_applied TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS inventory (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_name TEXT NOT NULL UNIQUE,
-                stock INTEGER NOT NULL DEFAULT 25,
-                min_threshold INTEGER NOT NULL DEFAULT 5
-            );
-            CREATE TABLE IF NOT EXISTS store_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            """
-        )
+        is_pg = connection.is_pg
+        if is_pg:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'client',
+                    active_session_token TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS customizations (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    accessory_type TEXT NOT NULL,
+                    pet_name TEXT NOT NULL,
+                    pet_type TEXT NOT NULL DEFAULT 'Perro',
+                    color TEXT NOT NULL,
+                    size TEXT NOT NULL,
+                    engraving TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS orders (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    payment_method TEXT NOT NULL,
+                    total_amount REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Completado',
+                    coupon_applied TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS inventory (
+                    id SERIAL PRIMARY KEY,
+                    product_name TEXT NOT NULL UNIQUE,
+                    stock INTEGER NOT NULL DEFAULT 25,
+                    min_threshold INTEGER NOT NULL DEFAULT 5
+                );
+                CREATE TABLE IF NOT EXISTS store_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                """
+            )
+        else:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'client',
+                    active_session_token TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS customizations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    accessory_type TEXT NOT NULL,
+                    pet_name TEXT NOT NULL,
+                    pet_type TEXT NOT NULL DEFAULT 'Perro',
+                    color TEXT NOT NULL,
+                    size TEXT NOT NULL,
+                    engraving TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    payment_method TEXT NOT NULL,
+                    total_amount REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Completado',
+                    coupon_applied TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS inventory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_name TEXT NOT NULL UNIQUE,
+                    stock INTEGER NOT NULL DEFAULT 25,
+                    min_threshold INTEGER NOT NULL DEFAULT 5
+                );
+                CREATE TABLE IF NOT EXISTS store_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                """
+            )
+        
         for prod in ACCESSORY_TYPES:
             exists = connection.execute("SELECT id FROM inventory WHERE product_name = ?", (prod,)).fetchone()
             if not exists:
@@ -279,7 +390,7 @@ def decode_token(token: str) -> int:
 
 def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> sqlite3.Row:
+) -> Any:
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -357,12 +468,12 @@ def register(user: UserRegister) -> dict[str, Any]:
             user_id = cursor.lastrowid
             token = encode_token(user_id)
             connection.execute("UPDATE users SET active_session_token = ? WHERE id = ?", (token, user_id))
-            connection.commit()  # <-- Fuerza el almacenamiento permanente en el archivo luxpet.db
-        except sqlite3.IntegrityError:
+            connection.commit()
+        except Exception:
             raise HTTPException(status_code=409, detail="El correo ya está registrado en el sistema.")
 
     return {
-        "message": "¡Cuenta creada exitosamente y guardada en el sistema!",
+        "message": "¡Cuenta creada exitosamente y guardada en la nube!",
         "access_token": token,
         "token_type": "bearer",
         "user": {"id": user_id, "name": user.name.strip(), "email": user.email.lower(), "role": "client"},
@@ -410,7 +521,7 @@ def login(user: UserLogin) -> dict[str, Any]:
 @app.post("/api/customizations", status_code=status.HTTP_201_CREATED)
 def create_customization(
     customization: AccessoryCustomization,
-    user: sqlite3.Row = Depends(current_user),
+    user: Any = Depends(current_user),
 ) -> dict[str, Any]:
     with get_connection() as connection:
         if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
@@ -456,7 +567,7 @@ def create_customization(
 
 @app.get("/api/customizations")
 def list_customizations(
-    user: sqlite3.Row = Depends(current_user),
+    user: Any = Depends(current_user),
 ) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
@@ -469,7 +580,7 @@ def list_customizations(
 @app.delete("/api/customizations/{customization_id}")
 def delete_customization(
     customization_id: int,
-    user: sqlite3.Row = Depends(current_user),
+    user: Any = Depends(current_user),
 ) -> dict[str, Any]:
     with get_connection() as connection:
         cursor = connection.execute(
@@ -482,7 +593,7 @@ def delete_customization(
 
 
 @app.get("/api/user/me")
-def get_user_profile(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+def get_user_profile(user: Any = Depends(current_user)) -> dict[str, Any]:
     with get_connection() as connection:
         orders = connection.execute(
             "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)
@@ -492,7 +603,7 @@ def get_user_profile(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any
         "name": user["name"],
         "email": user["email"],
         "role": user["role"],
-        "created_at": user["created_at"],
+        "created_at": str(user["created_at"]),
         "orders": [dict(o) for o in orders]
     }
 
@@ -508,7 +619,7 @@ def validate_coupon(data: dict[str, str]) -> dict[str, Any]:
 @app.post("/api/orders", status_code=status.HTTP_201_CREATED)
 def create_order(
     order_data: OrderCreate,
-    user: sqlite3.Row = Depends(current_user),
+    user: Any = Depends(current_user),
 ) -> dict[str, Any]:
     with get_connection() as connection:
         if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
@@ -528,7 +639,7 @@ def create_order(
         for item in cart_items:
             prod_name = item["accessory_type"]
             connection.execute(
-                "UPDATE inventory SET stock = MAX(0, stock - 1) WHERE product_name = ?",
+                "UPDATE inventory SET stock = GREATEST(0, stock - 1) WHERE product_name = ?" if connection.is_pg else "UPDATE inventory SET stock = MAX(0, stock - 1) WHERE product_name = ?",
                 (prod_name,)
             )
 
@@ -552,7 +663,7 @@ def create_order(
 
 
 @app.get("/api/orders")
-def list_orders(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any]]:
+def list_orders(user: Any = Depends(current_user)) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
@@ -572,14 +683,20 @@ ADMIN_PASSWORD = "arroz1234"
 def init_admin_role_and_account() -> None:
     with get_connection() as conn:
         try:
-            conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'")
+            if conn.is_pg:
+                conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'client'")
+            else:
+                conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'")
             conn.commit()
-        except sqlite3.OperationalError:
+        except Exception:
             pass
         try:
-            conn.execute("ALTER TABLE users ADD COLUMN active_session_token TEXT")
+            if conn.is_pg:
+                conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_session_token TEXT")
+            else:
+                conn.execute("ALTER TABLE users ADD COLUMN active_session_token TEXT")
             conn.commit()
-        except sqlite3.OperationalError:
+        except Exception:
             pass
 
         admin_user = conn.execute("SELECT id FROM users WHERE email = ?", (ADMIN_EMAIL,)).fetchone()
@@ -600,7 +717,7 @@ initialize_database()
 init_admin_role_and_account()
 
 
-def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
+def current_admin(user: Any = Depends(current_user)) -> Any:
     if user["email"] != ADMIN_EMAIL and user["role"] != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -610,7 +727,7 @@ def current_admin(user: sqlite3.Row = Depends(current_user)) -> sqlite3.Row:
 
 
 @app.get("/api/admin/metrics")
-def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+def get_admin_metrics(filter_period: str = "all", admin: Any = Depends(current_admin)) -> dict[str, Any]:
     with get_connection() as conn:
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
@@ -628,8 +745,8 @@ def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(c
             date_filter_sql = f"WHERE DATE(created_at) >= '{month_ago}'"
 
         daily_sales = conn.execute(f"""
-            SELECT DATE(created_at) as sale_date, COUNT(*) as orders_count, SUM(total_amount) as daily_revenue
-            FROM orders {date_filter_sql} GROUP BY DATE(created_at) ORDER BY sale_date DESC
+            SELECT CAST(created_at AS DATE) as sale_date, COUNT(*) as orders_count, SUM(total_amount) as daily_revenue
+            FROM orders {date_filter_sql} GROUP BY CAST(created_at AS DATE) ORDER BY sale_date DESC
         """).fetchall()
 
         top_products = conn.execute(f"""
@@ -652,7 +769,7 @@ def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(c
         "metrics": {
             "users_count": total_users,
             "orders_count": total_orders,
-            "total_revenue": total_revenue
+            "total_revenue": float(total_revenue)
         },
         "daily_sales": [dict(r) for r in daily_sales],
         "top_products": [dict(r) for r in top_products],
@@ -664,7 +781,7 @@ def get_admin_metrics(filter_period: str = "all", admin: sqlite3.Row = Depends(c
 
 
 @app.put("/api/admin/store/toggle")
-def toggle_store_status(admin: sqlite3.Row = Depends(current_admin)) -> dict[str, Any]:
+def toggle_store_status(admin: Any = Depends(current_admin)) -> dict[str, Any]:
     with get_connection() as conn:
         current = conn.execute("SELECT value FROM store_settings WHERE key = 'store_status'").fetchone()
         new_status = "closed" if current and current["value"] == "open" else "open"
@@ -676,7 +793,7 @@ def toggle_store_status(admin: sqlite3.Row = Depends(current_admin)) -> dict[str
 @app.put("/api/admin/inventory")
 def update_inventory(
     inv_update: InventoryUpdate,
-    admin: sqlite3.Row = Depends(current_admin),
+    admin: Any = Depends(current_admin),
 ) -> dict[str, Any]:
     with get_connection() as conn:
         conn.execute(
@@ -691,7 +808,7 @@ def update_inventory(
 def update_order_status(
     order_id: int,
     status_update: OrderStatusUpdate,
-    admin: sqlite3.Row = Depends(current_admin),
+    admin: Any = Depends(current_admin),
 ) -> dict[str, Any]:
     with get_connection() as conn:
         cursor = conn.execute(
@@ -707,7 +824,7 @@ def update_order_status(
 @app.delete("/api/admin/users/{user_id}")
 def delete_user_by_admin(
     user_id: int,
-    admin: sqlite3.Row = Depends(current_admin),
+    admin: Any = Depends(current_admin),
 ) -> dict[str, Any]:
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta de Dueño.")
@@ -723,7 +840,7 @@ def delete_user_by_admin(
 
 
 @app.get("/api/admin/export/orders")
-def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingResponse:
+def export_orders_csv(admin: Any = Depends(current_admin)) -> StreamingResponse:
     with get_connection() as conn:
         orders = conn.execute("""
             SELECT o.id, u.name, u.email, o.payment_method, o.total_amount, o.status, o.created_at
@@ -735,7 +852,7 @@ def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingR
     writer.writerow(["ID Orden", "Cliente", "Email", "Método de Pago", "Monto Total (COP)", "Estado", "Fecha Creación"])
 
     for o in orders:
-        writer.writerow([o["id"], o["name"], o["email"], o["payment_method"], o["total_amount"], o["status"], o["created_at"]])
+        writer.writerow([o["id"], o["name"], o["email"], o["payment_method"], o["total_amount"], o["status"], str(o["created_at"])])
 
     output.seek(0)
     return StreamingResponse(
@@ -746,7 +863,7 @@ def export_orders_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingR
 
 
 @app.get("/api/admin/export/users")
-def export_users_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingResponse:
+def export_users_csv(admin: Any = Depends(current_admin)) -> StreamingResponse:
     with get_connection() as conn:
         users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id DESC").fetchall()
 
@@ -755,7 +872,7 @@ def export_users_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingRe
     writer.writerow(["ID Usuario", "Nombre Completo", "Correo Electrónico (Email)", "Rol", "Fecha Registro"])
 
     for u in users:
-        writer.writerow([u["id"], u["name"], u["email"], u["role"], u["created_at"]])
+        writer.writerow([u["id"], u["name"], u["email"], u["role"], str(u["created_at"])])
 
     output.seek(0)
     return StreamingResponse(
@@ -765,16 +882,13 @@ def export_users_csv(admin: sqlite3.Row = Depends(current_admin)) -> StreamingRe
     )
 
 
-# ==============================================================================
-# ENDPOINT DE HEALTH CHECK (PARA MANTENER ACTIVO EL SERVIDOR EN RENDER)
-# ==============================================================================
 @app.api_route("/api/health", methods=["GET", "HEAD"])
 def health_check():
     return "OK"
 
 
 # ==============================================================================
-# VISTA FRONTEND PRINCIPAL Y PANEL JS
+# VISTA FRONTEND PRINCIPAL Y PANEL JS (MANTENIDO ÍNTEGRO)
 # ==============================================================================
 
 HOME_PAGE = """
@@ -923,7 +1037,6 @@ HOME_PAGE = """
       </a>
     </div>
 
-    <!-- Barra de búsqueda oculta por defecto en la vista de Login/Registro -->
     <div class="d-none align-items-center flex-grow-1 mx-4 position-relative" id="clientSearchWrapper">
       <input type="text" id="homeSearchInput" class="form-control rounded-pill px-3 py-1 bg-white shadow-sm" placeholder="🔍 Buscar placas, collares, arneses, camas..." oninput="handleSearchAutocomplete(this.value)">
       <div id="searchSuggestions" class="search-autocomplete-box"></div>
@@ -1615,7 +1728,6 @@ function logout() {
 function showDashboard() {
   if ($('loginScreen'))$('loginScreen').classList.add('d-none');
   
-  // Mostrar la barra de búsqueda ahora que el usuario inició sesión
   if ($('clientSearchWrapper')) {
     $('clientSearchWrapper').classList.remove('d-none');$('clientSearchWrapper').classList.add('d-md-flex');
   }
