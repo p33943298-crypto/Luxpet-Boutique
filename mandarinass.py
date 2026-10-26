@@ -66,7 +66,7 @@ PRODUCT_IMAGES = {
     "Collar de Cuero": "/static/Coleccion Velvet Gold.jpg",
     "Arnés Confort": "/static/Arnes Ergonomico.jpg",
     "Correa Elegance 3m": "/static/Coleccion Velvet Gold.jpg",
-    "Bandana de Seda": "/static/Coleccion Velvet Gold.jpg",
+    "Bandana de Seda": "/static/Gemini_Generated_Image_lfir6clfir6clfir.jpg",
     "Moño de Gala": "/static/Logo dorado.jpg",
     "Cama Oropel": "/static/Arnes Ergonomico.jpg"
 }
