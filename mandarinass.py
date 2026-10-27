@@ -951,6 +951,7 @@ HOME_PAGE = """
           <div>
             <strong class="d-block text-dark" id="sbUserName">Usuario</strong>
             <small class="text-muted d-block" id="sbUserEmail">correo@ejemplo.com</small>
+            <small class="text-primary d-block mt-1 fw-semibold" id="sbUserCity">📍 Ubicación: No seleccionada</small>
           </div>
         </div>
       </div>
@@ -1254,6 +1255,38 @@ HOME_PAGE = """
   </footer>
 </div>
 
+<!-- MODAL PARA SELECCIÓN DE CIUDAD DE COLOMBIA DESPUÉS DE INICIAR SESIÓN -->
+<div class="modal fade" id="citySelectionModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4 border-0 p-4 shadow-lg text-center">
+      <div class="modal-header border-bottom-0 pb-0 justify-content-center">
+        <h5 class="modal-title brand-font fs-3 fw-bold text-dark">📍 Selecciona tu Ciudad</h5>
+      </div>
+      <div class="modal-body py-3">
+        <p class="text-muted small mb-4">Por favor selecciona la ciudad de Colombia en la que te encuentras para calcular envíos y disponibilidad de boutique:</p>
+        
+        <div class="d-grid gap-2">
+          <button type="button" class="btn btn-outline-dark btn-lg rounded-pill fw-semibold py-2 d-flex justify-content-between align-items-center px-4" onclick="selectColombiaCity('Bogotá')">
+            <span>🌆 Bogotá D.C.</span> <small class="text-muted">Capital</small>
+          </button>
+          <button type="button" class="btn btn-outline-dark btn-lg rounded-pill fw-semibold py-2 d-flex justify-content-between align-items-center px-4" onclick="selectColombiaCity('Medellín')">
+            <span>🏙️ Medellín</span> <small class="text-muted">Antioquia</small>
+          </button>
+          <button type="button" class="btn btn-outline-dark btn-lg rounded-pill fw-semibold py-2 d-flex justify-content-between align-items-center px-4" onclick="selectColombiaCity('Cali')">
+            <span>🌴 Cali</span> <small class="text-muted">Valle del Cauca</small>
+          </button>
+          <button type="button" class="btn btn-outline-dark btn-lg rounded-pill fw-semibold py-2 d-flex justify-content-between align-items-center px-4" onclick="selectColombiaCity('Barranquilla')">
+            <span>🌊 Barranquilla</span> <small class="text-muted">Atlántico</small>
+          </button>
+          <button type="button" class="btn btn-outline-dark btn-lg rounded-pill fw-semibold py-2 d-flex justify-content-between align-items-center px-4" onclick="selectColombiaCity('Bucaramanga')">
+            <span>🏞️ Bucaramanga</span> <small class="text-muted">Santander</small>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="cartModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content rounded-4 border-0 p-3">
@@ -1317,7 +1350,40 @@ let selectedMethod = 'Tarjeta de Crédito';
 let userCartItems = [];
 let appliedCouponCode = null;
 let couponDiscountPct = 0;
+let userSelectedCity = localStorage.getItem('luxpet_selected_city') || null;
 const $ = id => document.getElementById(id);
+
+function promptCitySelection() {
+  const cityModalEl = $('citySelectionModal');
+  if (cityModalEl) {
+    const modal = new bootstrap.Modal(cityModalEl, { backdrop: 'static', keyboard: false });
+    modal.show();
+  }
+}
+
+function selectColombiaCity(cityName) {
+  userSelectedCity = cityName;
+  localStorage.setItem('luxpet_selected_city', cityName);
+  
+  const cityModalEl = $('citySelectionModal');
+  if (cityModalEl) {
+    const modal = bootstrap.Modal.getInstance(cityModalEl);
+    if (modal) modal.hide();
+  }
+
+  updateCityBadgeDisplay();
+  notify(`📍 Ubicación seleccionada: ${cityName}, Colombia`, true);
+}
+
+function updateCityBadgeDisplay() {
+  const cityBadgeNav = $('userCityNavBadge');
+  if (cityBadgeNav) {
+    cityBadgeNav.textContent = userSelectedCity ? `📍 ${userSelectedCity}` : '📍 Seleccionar Ciudad';
+  }
+  if ($('sbUserCity')) {
+    $('sbUserCity').textContent = userSelectedCity ? `📍 Ubicación: ${userSelectedCity}, Colombia` : '📍 Ubicación: No seleccionada';
+  }
+}
 
 function mostrarMetodoPago(scroll = true) {
   const seccionPago = $('checkout');
@@ -1613,7 +1679,8 @@ if ($('authForm')) {$('authForm').onsubmit = async e => {
       localStorage.setItem('luxpet_token', token); 
       notify(data.message, true); 
       showDashboard();
-      await loadDesigns(); 
+      await loadDesigns();
+      promptCitySelection();
     } catch(error) { 
       notify(error.message); 
     } 
@@ -1652,6 +1719,9 @@ function showDashboard() {
   if ($('btnSidebarToggle'))$('btnSidebarToggle').classList.remove('d-none');
 
   if ($('userNavStatus')) {$('userNavStatus').innerHTML = `
+      <button class="btn btn-sm btn-outline-dark rounded-pill me-1" id="userCityNavBadge" onclick="promptCitySelection()">
+        ${userSelectedCity ? `📍 ${userSelectedCity}` : '📍 Seleccionar Ciudad'}
+      </button>
       <button class="btn btn-sm btn-outline-secondary rounded-pill me-2" onclick="openClientHistoryModal()">📦 Mis Pedidos</button>
       <div class="cart-btn-nav" onclick="openCartModal()">
         🛒 <span class="d-none d-md-inline fw-semibold ms-1">Carrito</span>
@@ -1665,6 +1735,7 @@ function showDashboard() {
   }
   if ($('sbUserName'))$('sbUserName').textContent = currentUser?.name || 'Cliente LuxPet';
   if ($('sbUserEmail'))$('sbUserEmail').textContent = currentUser?.email || '';
+  updateCityBadgeDisplay();
 }
 
 if ($('designForm')) {$('designForm').onsubmit = async e => {
@@ -1788,6 +1859,9 @@ async function loadDesigns() {
       currentUser = await api('/api/user/me');
       await loadDesigns();
       showDashboard();
+      if (!userSelectedCity && currentUser.role !== 'admin') {
+        promptCitySelection();
+      }
     } catch {
       localStorage.removeItem('luxpet_token');
       token = null;
